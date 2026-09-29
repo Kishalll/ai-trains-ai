@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Role data (generated on-demand by CLI)
+roles/
+
+# Documentation (kept local, ignored by git)
+docs/
+
+# Model binaries and checkpoints
+*.gguf
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# Deployments and runtime logs
+.deployments.json
+*.log
+.server_*.log
+
+# OS & IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

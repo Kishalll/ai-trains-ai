@@ -1,0 +1,4 @@
+default_student_model: "qwen2.5:3b"
+default_teacher_mode: "smart"
+roles_dir: "roles"
+ollama_url: "http://localhost:11434"

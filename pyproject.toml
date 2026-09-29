@@ -1,0 +1,53 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-institute"
+version = "0.1.0"
+description = "Role-locked college AI assistants framework"
+readme = "README.md"
+license = { text = "PolyForm-Noncommercial-1.0.0" }
+authors = [
+    { name = "Kishal", email = "kishal2007@gmail.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "typer>=0.9.0",
+    "rich>=13.0.0",
+    "pyyaml>=6.0",
+    "jinja2>=3.1.0",
+    "chromadb>=0.4.0",
+    "sentence-transformers>=2.2.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.22.0",
+    "ollama>=0.1.0",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+training = [
+    "torch>=2.0.0",
+    "transformers>=4.36.0",
+    "peft>=0.7.0",
+    "trl>=0.7.0",
+    "accelerate>=0.25.0",
+    "datasets>=2.15.0",
+]
+db = [
+    "mysqlclient>=2.2.0",
+]
+teachers = [
+    "google-generativeai>=0.3.0",
+    "openai>=1.0.0",
+]
+
+[project.scripts]
+ai-institute = "cli:app"
+
+[tool.setuptools]
+py-modules = ["cli", "deps"]
+packages = ["api", "data_processing", "inference", "tools", "training", "teachers"]
+
+[tool.setuptools.package-data]
+tools = ["templates/*.yaml"]

@@ -1,0 +1,49 @@
+# Koha Library Management System (MySQL) Tool Definition
+connection:
+  type: mysql
+  host: localhost
+  port: 3306
+  database: koha
+  user: koha_readonly
+  password_env: KOHA_DB_PASS
+
+tools:
+  - name: search_book
+    type: db
+    description: "Search library catalog by title, author, or keyword"
+    parameters:
+      - name: query
+        type: string
+        required: true
+        description: "Search keyword for title or author"
+    query: |
+      SELECT b.title, b.author, bi.isbn, i.location, i.itemcallnumber,
+             COUNT(i.itemnumber) as total_copies,
+             SUM(CASE WHEN i.onloan IS NULL AND i.itemlost = 0 THEN 1 ELSE 0 END) as available
+      FROM biblio b
+      JOIN biblioitems bi ON b.biblionumber = bi.biblionumber
+      JOIN items i ON b.biblionumber = i.biblionumber
+      WHERE b.title LIKE CONCAT('%', ?, '%') OR b.author LIKE CONCAT('%', ?, '%')
+      GROUP BY b.biblionumber
+      LIMIT 10
+    response_template: |
+      {% if results %}
+      Found books in catalog:
+      {% for row in results %}
+      - {{row.title}} by {{row.author}} (ISBN: {{row.isbn or 'N/A'}})
+        Location: {{row.location or 'General'}}, Shelf: {{row.itemcallnumber or 'Unassigned'}}
+        Availability: {{row.available or 0}} of {{row.total_copies or 0}} copies available
+      {% endfor %}
+      {% else %}
+      No books found matching this query in the library catalog.
+      {% endif %}
+
+  - name: get_borrowing_rules
+    type: static
+    description: "Get official library borrowing rules and loan limits"
+    response: |
+      Library Borrowing Rules:
+      - Undergraduate students: Up to 4 books for 14 days. Overdue fine is Rs. 1 per day per book.
+      - Postgraduate students: Up to 6 books for 21 days. Overdue fine is Rs. 1 per day per book.
+      - Faculty: Up to 10 books for 30 days. No overdue fine.
+      - Reference section books and journals cannot be issued for take-home borrowing.

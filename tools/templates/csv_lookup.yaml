@@ -1,0 +1,21 @@
+# CSV/JSON Local Data Lookup Tool Definition
+tools:
+  - name: lookup_menu
+    type: file
+    description: "Search daily cafeteria menu and item availability"
+    file_path: "data/canteen_menu.csv"
+    search_columns: ["item_name", "category"]
+    parameters:
+      - name: query
+        type: string
+        required: true
+        description: "Food name or cuisine category"
+    response_template: |
+      {% if results %}
+      Cafeteria Menu:
+      {% for row in results %}
+      - {{row.item_name}} ({{row.category}}): Rs. {{row.price}} [Status: {{row.available}}]
+      {% endfor %}
+      {% else %}
+      Item not found on the menu.
+      {% endif %}
