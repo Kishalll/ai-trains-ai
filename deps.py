@@ -12,7 +12,7 @@ DEPENDENCY_GROUPS = {
     },
     "training": {
         "description": "Model fine-tuning and export",
-        "packages": ["torch", "transformers", "peft", "trl", "accelerate", "datasets"],
+        "packages": ["torch", "transformers", "peft", "trl", "accelerate", "datasets", "gguf", "sentencepiece"],
         "download_size": "~500MB (CPU) / ~2.5GB (GPU)",
     },
     "api": {
@@ -129,7 +129,8 @@ def check_torch_hardware() -> None:
     if not is_installed("torch") or not has_nvidia_gpu():
         return
     try:
-        import torch
+        import importlib
+        torch = importlib.import_module("torch")
         if not torch.cuda.is_available():
             print("\nNotice: NVIDIA GPU detected, but CPU-only PyTorch is currently installed.")
             choice = input("Upgrade PyTorch to CUDA version? [Y/n]: ").strip().lower()
