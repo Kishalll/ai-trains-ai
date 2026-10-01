@@ -70,9 +70,13 @@ def export_role_to_ollama(role_path: Path, model_override: Optional[str] = None)
     if adapter_path.exists():
         if not (merged_dir / "config.json").exists():
             print("Found LoRA adapter. Merging weights into base model...")
-            import torch
-            from peft import PeftModel
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            import importlib
+            torch = importlib.import_module("torch")
+            peft = importlib.import_module("peft")
+            transformers = importlib.import_module("transformers")
+            PeftModel = peft.PeftModel
+            AutoModelForCausalLM = transformers.AutoModelForCausalLM
+            AutoTokenizer = transformers.AutoTokenizer
 
             base_name = (
                 "Qwen/Qwen2.5-3B-Instruct"
@@ -83,7 +87,7 @@ def export_role_to_ollama(role_path: Path, model_override: Optional[str] = None)
             print(f"Loading base model '{base_name}' on {device}...")
             base_model = AutoModelForCausalLM.from_pretrained(
                 base_name,
-                torch_dtype=torch.float16,
+                dtype=torch.float16,
                 device_map="auto" if device == "cuda" else "cpu",
             )
             model = PeftModel.from_pretrained(base_model, str(model_dir))
@@ -96,7 +100,12 @@ def export_role_to_ollama(role_path: Path, model_override: Optional[str] = None)
             tokenizer.save_pretrained(str(merged_dir))
             print(f"Merged model saved to {merged_dir}")
 
-        from_model = str(merged_dir.resolve())
+    # Check for converted GGUF model first, otherwise use Ollama's base model
+    gguf_files = list(model_dir.glob("*.gguf"))
+    if gguf_files:
+        from_model = str(gguf_files[0].resolve())
+    else:
+        from_model = student_model
 
     system_prompt = build_system_prompt(cfg)
 
@@ -117,8 +126,6 @@ SYSTEM \"\"\"{system_prompt}\"\"\"
     print(f"Registering model '{ollama_model_name}' in Ollama...")
 
     cmd = [ollama_bin, "create", ollama_model_name, "-f", str(modelfile_path)]
-    if from_model != student_model:
-        cmd.extend(["-q", "q4_K_M"])
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
