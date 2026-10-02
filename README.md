@@ -72,6 +72,8 @@ Every user message passes through a 4-layer defense pipeline managed by the `Cha
 
 All commands can be run directly via `.venv/bin/ai-institute <command>`, or `ai-institute <command>` (with the virtual environment activated).
 
+> **Full Reference**: See [`commands.md`](commands.md) for a comprehensive guide to all 27 commands with complete argument tables, option flags, defaults, and usage examples.
+
 ### Role Management
 
 #### `create-role`
