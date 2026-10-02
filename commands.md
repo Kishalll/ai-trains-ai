@@ -1,6 +1,6 @@
 # AI-Institute CLI Command Reference
 
-This document provides a comprehensive reference for all 27 commands implemented in the `ai-institute` CLI ([`cli.py`](file:///root/ai-trains-ai/cli.py)).
+This document provides a comprehensive reference for all 26 commands implemented in the `ai-institute` CLI ([`cli.py`](file:///root/ai-trains-ai/cli.py)).
 
 ---
 
@@ -49,7 +49,6 @@ ai-institute <command> [OPTIONS] [ARGUMENTS]
   - [`deploy`](#deploy)
   - [`status`](#status)
   - [`stop`](#stop)
-  - [`tunnel`](#tunnel)
 - [7. Packaging, Backup & Portability](#7-packaging-backup--portability)
   - [`backup`](#backup)
   - [`restore`](#restore)
@@ -517,37 +516,6 @@ ai-institute stop <role> [OPTIONS]
 | Option | Flag | Type | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `--autostart` | — | `bool` | `False` | Stops and disables the systemd service unit if previously installed with `--autostart`. |
-
----
-
-### `tunnel`
-A standalone public reverse tunnel utility that routes traffic from the public internet to your local server over outbound HTTPS port 443 (firewall-resilient).
-
-**Usage:**
-```bash
-ai-institute tunnel [OPTIONS]
-```
-
-**Options:**
-| Option | Flag | Type | Default | Description |
-| :--- | :--- | :--- | :--- | :--- |
-| `--port` | `-p` | `int` | `8080` | Local port of the running API server to expose. |
-| `--host` | `-h` | `string` | `localhost` | Local host to forward traffic to. |
-| `--background` | `-d` | `bool` | `False` | Runs the tunnel in the background as a detached daemon process. |
-| `--stop` | — | `bool` | `False` | Gracefully stops the active background tunnel daemon recorded in `.tunnel.pid`. |
-| `--save-url` /<br>`--no-save-url` | — | `bool` | `True` | Writes the assigned public HTTPS address to `PUBLIC_URL.txt` (git-ignored). |
-
-**Examples:**
-```bash
-# Run interactively (press Ctrl+C to close):
-ai-institute tunnel --port 8080
-
-# Run in background:
-ai-institute tunnel --port 8080 -d
-
-# Stop background tunnel:
-ai-institute tunnel --stop
-```
 
 ---
 

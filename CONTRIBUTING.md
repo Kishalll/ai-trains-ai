@@ -57,12 +57,16 @@ ai-institute/
 ├── requirements.txt            # Core runtime dependencies (typer, pyyaml, rich, jinja2)
 ├── config.yaml                 # Global framework configuration
 ├── pyproject.toml              # Packaging specification for pip and standalone wheel builds
-├── deps.py                     # Lazy dependency checker and installer
 ├── cli.py                      # Typer CLI implementation containing all 26 commands
 ├── .deployments.json           # Active server deployments registry
+├── PUBLIC_URL.txt              # Live public reverse tunnel URL (synced from tunnel daemon)
+├── commands.md                 # Complete CLI command reference and options guide
 ├── README.md                   # User-facing overview and CLI reference
 ├── CONTRIBUTING.md             # Technical architecture and guide (this file)
+│
 ├── scripts/                    # Deployment templates and service scripts
+│   ├── tunnel.py               # Outbound port 443 reverse SSH tunnel supervisor
+│   └── ai-institute-tunnel.service.template # Systemd service unit template for port 443 reverse tunnel
 │
 ├── api/                        # REST API implementation
 │   ├── __init__.py
@@ -356,34 +360,24 @@ Deploying to a production server requires no repository cloning and avoids insta
 6. Expose the deployment publicly (Firewall-Resilient Reverse Tunnel):
    In institutional and enterprise hosting environments, inbound ports (such as 8080) are frequently blocked by network firewalls, and outbound tunneling tools (like Cloudflare Tunnel or standard SSH) are restricted or blocked on ports 22 or UDP/7844.
 
-   AI-Institute includes a built-in reverse tunnel operating over outbound HTTPS port 443:
+   AI-Institute includes an integrated reverse tunnel operating over outbound HTTPS port 443 via `--tunnel`:
    ```bash
-   # Launch in foreground
-   ai-institute tunnel --port 8080
+   # Deploy with integrated reverse tunnel
+   ai-institute deploy librarian --port 8080 --host 0.0.0.0 --tunnel
 
-   # Or launch in background as a daemon
-   ai-institute tunnel --port 8080 -d
+   # Or with 24/7 systemd reboot autostart + tunnel
+   ai-institute deploy librarian --port 8080 --host 0.0.0.0 --tunnel --autostart
 
-   # Stop any running background tunnel
-   ai-institute tunnel --stop
+   # To manually supervise standalone tunnels without the API server, use the helper script:
+   python scripts/tunnel.py --port 8080
    ```
-
-   **CLI Tunnel Options Reference:**
-
-   | Option | Flag | Type | Default | Description |
-   | :--- | :--- | :--- | :--- | :--- |
-   | `--port` | `-p` | `int` | `8080` | Local port of the running API server to expose. |
-   | `--host` | `-h` | `str` | `localhost` | Local target host address to forward traffic to. |
-   | `--background` | `-d` | `bool` | `False` | Detaches the tunnel process and runs it in the background as a daemon. |
-   | `--stop` | — | `bool` | `False` | Gracefully stops the active background tunnel daemon recorded in `.tunnel.pid`. |
-   | `--save-url` / `--no-save-url` | — | `bool` | `True` | Writes the assigned live HTTPS address to `PUBLIC_URL.txt` (git-ignored). |
 
    **Key Technical Features:**
    - **Port 443 Egress**: Establishes a secure reverse SSH tunnel through `a.pinggy.io:443`, bypassing campus hardware firewalls (e.g., Fortinet FortiGate) without requiring root network privileges or open inbound ports.
-   - **Background Daemon (`-d` / `--background`)**: Spawns the tunnel detached in the background, prints the assigned public URLs and PID, and returns control to your terminal.
-   - **Clean Stop (`--stop`)**: Terminates running background tunnel processes and cleans up `.tunnel.pid`.
+   - **Background Daemon (`-d` / `--background`)**: `deploy` spawns the tunnel detached in the background, prints the assigned public URLs and PID, and returns control to your terminal.
+   - **Clean Stop (`stop <role>`)**: Terminates running background tunnel processes and cleans up `.tunnel.pid`.
    - **Live Ingress URLs**: Outputs the assigned public HTTPS address, dark-mode web playground URL (`/`), and interactive Swagger documentation URL (`/docs`).
-   - **URL Synchronization**: Automatically syncs the active tunnel URL into `PUBLIC_URL.txt` (which is git-ignored).
+   - **URL Synchronization**: Automatically syncs the active tunnel URL into `PUBLIC_URL.txt`.
    - **Systemd Daemonization**: For 24/7 background operation managed by OS init, a systemd template is provided at `scripts/ai-institute-tunnel.service.template`.
 
 ---

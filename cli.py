@@ -1025,7 +1025,7 @@ Wants={service_name}
 Type=simple
 User={user_name}
 WorkingDirectory={project_root}
-ExecStart={sys.executable} {project_root / "cli.py"} tunnel --port {port} --host 127.0.0.1
+ExecStart={sys.executable} {project_root / "scripts" / "tunnel.py"} --port {port} --host 127.0.0.1
 Restart=always
 RestartSec=5
 
@@ -1128,14 +1128,15 @@ WantedBy=multi-user.target
     if not background:
         if tunnel:
             console.print(f"Starting reverse tunnel in background for port {port}...")
-            tunnel_cmd = [
-                sys.executable,
-                str(Path(__file__).resolve()),
-                "tunnel",
-                "--port", str(port),
-                "--background",
-            ]
-            subprocess.run(tunnel_cmd)
+            tunnel_script = Path(__file__).resolve().parent / "scripts" / "tunnel.py"
+            with open(TUNNEL_LOG_FILE, "a", encoding="utf-8") as t_log:
+                tunnel_proc = subprocess.Popen(
+                    [sys.executable, str(tunnel_script), "--port", str(port), "--host", probe_host],
+                    stdout=t_log,
+                    stderr=subprocess.STDOUT,
+                    start_new_session=True,
+                )
+            TUNNEL_PID_FILE.write_text(str(tunnel_proc.pid), encoding="utf-8")
 
         console.print(f"Starting server in foreground on http://{host}:{port}...")
         subprocess.run(cmd, env=env)
@@ -1180,13 +1181,12 @@ WantedBy=multi-user.target
         except Exception:
             pass
 
+        tunnel_script = Path(__file__).resolve().parent / "scripts" / "tunnel.py"
         worker_cmd = [
             sys.executable,
-            str(Path(__file__).resolve()),
-            "tunnel",
+            str(tunnel_script),
             "--port", str(port),
             "--host", probe_host,
-            "--daemon-worker",
         ]
         with open(TUNNEL_LOG_FILE, "a", encoding="utf-8") as t_log:
             tunnel_proc = subprocess.Popen(
@@ -1609,219 +1609,7 @@ TUNNEL_PID_FILE = Path(".tunnel.pid")
 TUNNEL_LOG_FILE = Path(".tunnel.log")
 
 
-@app.command("tunnel")
-def tunnel_command(
-    port: int = typer.Option(8080, "--port", "-p", help="Local server port to expose"),
-    host: str = typer.Option("localhost", "--host", "-h", help="Local target host"),
-    save_url: bool = typer.Option(True, "--save-url/--no-save-url", help="Save live URL to PUBLIC_URL.txt"),
-    background: bool = typer.Option(False, "--background", "-d", help="Run tunnel in background as a daemon"),
-    stop: bool = typer.Option(False, "--stop", help="Stop any running background tunnel"),
-    daemon_worker: bool = typer.Option(False, "--daemon-worker", hidden=True),
-):
-    """Expose local API server via a secure public HTTPS reverse tunnel over port 443 (firewall-friendly)."""
-    # 1. Handle --stop
-    if stop:
-        if not TUNNEL_PID_FILE.exists():
-            console.print("[yellow]No active background tunnel was running.[/yellow]")
-            raise typer.Exit(0)
-
-        stopped = False
-        try:
-            pid = int(TUNNEL_PID_FILE.read_text().strip())
-            if _is_pid_alive(pid):
-                os.kill(pid, signal.SIGTERM)
-                time.sleep(1)
-                if _is_pid_alive(pid):
-                    os.kill(pid, signal.SIGKILL)
-                stopped = True
-        except Exception:
-            pass
-        finally:
-            try:
-                TUNNEL_PID_FILE.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-        if stopped:
-            console.print("[bold green]Public tunnel stopped successfully.[/bold green]")
-        else:
-            console.print("[yellow]Tunnel process was not running (cleaned up stale PID file).[/yellow]")
-        raise typer.Exit(0)
-
-    ssh_bin = shutil.which("ssh")
-    if not ssh_bin:
-        console.print("[red]Error:[/red] 'ssh' binary not found. Please ensure OpenSSH client is installed.")
-        raise typer.Exit(1)
-
-    url_file = Path("PUBLIC_URL.txt")
-
-    # 2. Handle --background / -d launcher
-    if background:
-        if TUNNEL_PID_FILE.exists():
-            try:
-                pid = int(TUNNEL_PID_FILE.read_text().strip())
-                if _is_pid_alive(pid):
-                    console.print(f"[yellow]Tunnel is already running in background (PID {pid}).[/yellow]")
-                    console.print("[dim]Run 'ai-institute tunnel --stop' to terminate it first.[/dim]")
-                    raise typer.Exit(0)
-            except ValueError:
-                pass
-
-        console.print(f"Starting reverse tunnel in background for [cyan]{host}:{port}[/cyan] over port 443...")
-        try:
-            url_file.unlink(missing_ok=True)
-        except Exception:
-            pass
-
-        worker_cmd = [
-            sys.executable,
-            str(Path(__file__).resolve()),
-            "tunnel",
-            "--port", str(port),
-            "--host", host,
-            "--daemon-worker",
-        ]
-        if not save_url:
-            worker_cmd.append("--no-save-url")
-
-        with open(TUNNEL_LOG_FILE, "a", encoding="utf-8") as log_f:
-            daemon_proc = subprocess.Popen(
-                worker_cmd,
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,
-            )
-
-        TUNNEL_PID_FILE.write_text(str(daemon_proc.pid), encoding="utf-8")
-
-        assigned_url = None
-        start_wait = time.time()
-        while time.time() - start_wait < 10:
-            if not _is_pid_alive(daemon_proc.pid):
-                console.print(f"[red]Error:[/red] Tunnel process exited unexpectedly. Check {TUNNEL_LOG_FILE}.")
-                raise typer.Exit(1)
-
-            if url_file.exists():
-                content = url_file.read_text(encoding="utf-8").strip()
-                if content.startswith("http"):
-                    assigned_url = content
-                    break
-
-            if TUNNEL_LOG_FILE.exists():
-                try:
-                    log_text = TUNNEL_LOG_FILE.read_text(encoding="utf-8")
-                    matches = re.findall(r"https://[a-zA-Z0-9.-]+\.pinggy\.(?:link|net)", log_text)
-                    if matches:
-                        assigned_url = matches[-1]
-                        if save_url:
-                            url_file.write_text(assigned_url + "\n", encoding="utf-8")
-                        break
-                except Exception:
-                    pass
-
-            time.sleep(0.5)
-
-        if assigned_url:
-            panel_text = (
-                f"[bold green]Tunnel is active and running in background![/bold green]\n\n"
-                f"  [bold]Local Target:[/bold]    http://{host}:{port}\n"
-                f"  [bold]Public URL:[/bold]      [cyan]{assigned_url}[/cyan]\n"
-                f"  [bold]Web Playground:[/bold]  [cyan]{assigned_url}/[/cyan]\n"
-                f"  [bold]Swagger Docs:[/bold]    [cyan]{assigned_url}/docs[/cyan]\n"
-                f"  [bold]PID:[/bold]             {daemon_proc.pid}\n\n"
-                f"[dim]Run 'ai-institute tunnel --stop' to shut down the background tunnel.[/dim]"
-            )
-            console.print(Panel(panel_text, title="AI-Institute Public Egress Tunnel", border_style="cyan"))
-        else:
-            console.print(f"[yellow]Tunnel daemon started (PID {daemon_proc.pid}).[/yellow] Public URL may take a few seconds to appear in {url_file.name}.")
-
-        raise typer.Exit(0)
-
-    # 3. Foreground / Daemon Worker Execution Loop
-    cmd = [
-        ssh_bin,
-        "-p", "443",
-        "-o", "StrictHostKeyChecking=no",
-        "-o", "ServerAliveInterval=30",
-        "-o", "ServerAliveCountMax=3",
-        "-R", f"0:{host}:{port}",
-        "a.pinggy.io",
-    ]
-
-    if not daemon_worker:
-        console.print(f"Establishing secure reverse tunnel for [cyan]{host}:{port}[/cyan] over outbound port 443...")
-
-    stop_requested = False
-
-    def handle_sig(sig, frame):
-        nonlocal stop_requested
-        stop_requested = True
-        if not daemon_worker:
-            console.print("\n[yellow]Shutting down tunnel...[/yellow]")
-
-    signal.signal(signal.SIGINT, handle_sig)
-    signal.signal(signal.SIGTERM, handle_sig)
-
-    active_url = None
-
-    while not stop_requested:
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
-        except Exception as e:
-            if not daemon_worker:
-                console.print(f"[red]Failed to launch tunnel process:[/red] {e}")
-            time.sleep(3)
-            continue
-
-        while not stop_requested:
-            line = proc.stdout.readline()
-            if not line:
-                if proc.poll() is not None:
-                    break
-                time.sleep(0.1)
-                continue
-
-            matches = re.findall(r"https://[a-zA-Z0-9.-]+\.pinggy\.(?:link|net)", line)
-            if matches and matches[0] != active_url:
-                active_url = matches[0]
-                if save_url:
-                    try:
-                        url_file.write_text(active_url + "\n", encoding="utf-8")
-                    except Exception:
-                        pass
-
-                if not daemon_worker:
-                    panel_text = (
-                        f"[bold green]Tunnel is active and live![/bold green]\n\n"
-                        f"  [bold]Local Target:[/bold]    http://{host}:{port}\n"
-                        f"  [bold]Public URL:[/bold]      [cyan]{active_url}[/cyan]\n"
-                        f"  [bold]Web Playground:[/bold]  [cyan]{active_url}/[/cyan]\n"
-                        f"  [bold]Swagger Docs:[/bold]    [cyan]{active_url}/docs[/cyan]\n"
-                        f"  [bold]ReDoc:[/bold]           [cyan]{active_url}/redoc[/cyan]\n\n"
-                        f"[dim]Press Ctrl+C to close the tunnel.[/dim]"
-                    )
-                    console.print(Panel(panel_text, title="AI-Institute Public Egress Tunnel", border_style="cyan"))
-
-        if proc.poll() is None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=3)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-
-        if not stop_requested:
-            time.sleep(3)
-
-    if not daemon_worker:
-        console.print("[green]Tunnel closed cleanly.[/green]")
-
-
 if __name__ == "__main__":
     app()
+
 

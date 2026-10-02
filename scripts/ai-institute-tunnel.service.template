@@ -6,7 +6,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/path/to/ai-institute
-ExecStart=/path/to/.venv/bin/ai-institute tunnel --port 8080
+ExecStart=/path/to/.venv/bin/python /path/to/ai-institute/scripts/tunnel.py --port 8080
 Restart=always
 RestartSec=5
 

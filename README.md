@@ -8,6 +8,8 @@
 [![Training: PyTorch / PEFT](https://img.shields.io/badge/Training-PyTorch_%2F_PEFT-EE4C2C.svg)](https://pytorch.org/)
 [![Models: Qwen2.5](https://img.shields.io/badge/Models-Qwen2.5-ffd21e.svg)](https://huggingface.co/Qwen)
 
+> [📖 **CLI Commands Manual (`commands.md`)**](commands.md) &nbsp;|&nbsp; [🤝 **Contributor & Architecture Guide (`CONTRIBUTING.md`)**](CONTRIBUTING.md) &nbsp;|&nbsp; [📄 **License**](LICENSE)
+
 AI-Institute is a framework for building, training, evaluating, and deploying role-locked AI assistants. A place where AI teaches AI. 
 
 Generic large language models hallucinate facts, give conflicting answers, leak instructions, and wander off topic. AI-Institute solves this by constraining small open models (such as Qwen2.5 1.5B and 3B) into strict campus personas (such as a library assistant, registrar, or departmental help desk) through fine-tuning, retrieval-augmented generation, tool calling, and multi-layer defenses.
@@ -72,7 +74,7 @@ Every user message passes through a 4-layer defense pipeline managed by the `Cha
 
 All commands can be run directly via `.venv/bin/ai-institute <command>`, or `ai-institute <command>` (with the virtual environment activated).
 
-> **Full Reference**: See [`commands.md`](commands.md) for a comprehensive guide to all 27 commands with complete argument tables, option flags, defaults, and usage examples.
+> **Full Reference**: See [`commands.md`](commands.md) for a comprehensive guide to all 26 commands with complete argument tables, option flags, defaults, and usage examples.
 
 ### Role Management
 
@@ -274,17 +276,6 @@ Bundles the runtime wheel, role data archive copy, Modelfile, and automated `ins
 .venv/bin/ai-institute package librarian [--output <path.zip>] [--model <tier>]
 ```
 (Alternatively: `ai-institute package librarian` with virtual environment activated)
-
-#### `tunnel`
-Exposes the local API server to the public internet via a secure HTTPS reverse tunnel over outbound port 443 (firewall-friendly).
-```bash
-.venv/bin/ai-institute tunnel [--port 8080] [--host localhost] [--background/-d] [--stop] [--save-url/--no-save-url]
-```
-- `--port`, `-p`: Local server port to expose (default: `8080`).
-- `--host`, `-h`: Local target host (default: `localhost`).
-- `--background`, `-d`: Runs the tunnel in the background as a detached daemon.
-- `--stop`: Stops any running background tunnel daemon.
-- `--save-url`: Saves the live public URL to `PUBLIC_URL.txt` (default: true).
 
 ---
 
