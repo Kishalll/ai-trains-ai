@@ -952,9 +952,11 @@ def deploy_command(
     role: str = typer.Argument(..., help="Role to deploy"),
     port: int = typer.Option(8080, "--port", "-p", help="Port to run the API server on"),
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface to bind to"),
-    foreground: bool = typer.Option(False, "--foreground", help="Run in foreground instead of background"),
+    background: bool = typer.Option(True, "--background/--foreground", "-d/-f", help="Run in background as a daemon (default: True)"),
+    tunnel: bool = typer.Option(False, "--tunnel", help="Expose deployment via public HTTPS reverse tunnel over port 443"),
+    autostart: bool = typer.Option(False, "--autostart", help="Install systemd service for 24/7 autostart on reboot"),
 ):
-    """Start the REST API server for a role."""
+    """Start the REST API server for a role with optional public tunnel and reboot autostart."""
     import deps
 
     if not deps.require_group("api"):
@@ -970,6 +972,131 @@ def deploy_command(
     _ensure_ollama_running()
 
     deployments = _load_deployments()
+
+    # 1. Handle systemd autostart
+    if autostart:
+        if not sys.platform.startswith("linux"):
+            console.print("[red]Error:[/red] Autostart via systemd is only supported on Linux.")
+            raise typer.Exit(1)
+
+        systemctl_bin = shutil.which("systemctl")
+        if not systemctl_bin:
+            console.print("[red]Error:[/red] 'systemctl' not found. Systemd is required for autostart.")
+            raise typer.Exit(1)
+
+        is_root = (os.geteuid() == 0) if hasattr(os, "geteuid") else True
+        if not is_root:
+            console.print("[red]Error:[/red] Installing systemd units requires root privileges. Please run with sudo:")
+            console.print(f"  sudo {sys.executable} cli.py deploy {role} --port {port} --host {host} {'--tunnel ' if tunnel else ''}--autostart")
+            raise typer.Exit(1)
+
+        project_root = Path(__file__).resolve().parent
+        user_name = os.environ.get("SUDO_USER") or os.environ.get("USER") or "root"
+        service_name = f"ai-institute-{role}.service"
+        unit_path = Path("/etc/systemd/system") / service_name
+
+        unit_content = f"""[Unit]
+Description=AI-Institute {role} REST API Service
+After=network.target ollama.service
+Wants=ollama.service
+
+[Service]
+Type=simple
+User={user_name}
+WorkingDirectory={project_root}
+Environment="AI_INSTITUTE_ROLES_DIR={roles_dir.resolve()}"
+Environment="AI_INSTITUTE_PREWARM_ROLE={role}"
+ExecStart={sys.executable} -m uvicorn api.server:app --host {host} --port {port}
+Restart=always
+RestartSec=5
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+"""
+        tunnel_service_name = f"ai-institute-{role}-tunnel.service"
+        tunnel_unit_path = Path("/etc/systemd/system") / tunnel_service_name
+        tunnel_unit_content = f"""[Unit]
+Description=Public HTTPS Tunnel for AI-Institute {role}
+After=network.target {service_name}
+Wants={service_name}
+
+[Service]
+Type=simple
+User={user_name}
+WorkingDirectory={project_root}
+ExecStart={sys.executable} {project_root / "cli.py"} tunnel --port {port} --host 127.0.0.1
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+"""
+        console.print(f"Installing systemd unit [cyan]{unit_path}[/cyan]...")
+        unit_path.write_text(unit_content, encoding="utf-8")
+        if tunnel:
+            console.print(f"Installing tunnel systemd unit [cyan]{tunnel_unit_path}[/cyan]...")
+            tunnel_unit_path.write_text(tunnel_unit_content, encoding="utf-8")
+
+        subprocess.run([systemctl_bin, "daemon-reload"], check=True)
+        subprocess.run([systemctl_bin, "enable", "--now", service_name], check=True)
+        if tunnel:
+            subprocess.run([systemctl_bin, "enable", "--now", tunnel_service_name], check=True)
+
+        console.print(f"[bold green]Autostart enabled and service started for {role}![/bold green]")
+
+        import urllib.request
+        probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
+        for _ in range(30):
+            time.sleep(1.0)
+            try:
+                with urllib.request.urlopen(f"http://{probe_host}:{port}/api/v1/health", timeout=2) as resp:
+                    if resp.status == 200:
+                        break
+            except Exception:
+                continue
+
+        tunnel_url = None
+        if tunnel:
+            url_file = Path("PUBLIC_URL.txt")
+            for _ in range(10):
+                time.sleep(1.0)
+                if url_file.exists():
+                    u = url_file.read_text(encoding="utf-8").strip()
+                    if u.startswith("http"):
+                        tunnel_url = u
+                        break
+
+        deployments[role] = {
+            "role": role,
+            "host": host,
+            "port": port,
+            "autostart": True,
+            "service": service_name,
+            "tunnel_service": tunnel_service_name if tunnel else None,
+            "started_at": datetime.now().isoformat(),
+            "tunnel_url": tunnel_url,
+        }
+        _save_deployments(deployments)
+
+        panel_lines = [
+            f"[bold green]Deployed {role} (24/7 Autostart Enabled)[/bold green]\n",
+            f"Service:      [cyan]{service_name}[/cyan] (active / enabled on boot)",
+            f"Local URL:    [cyan]http://{probe_host}:{port}[/cyan]",
+        ]
+        if host in ("0.0.0.0", "::"):
+            panel_lines.append(f"Remote URL:   [cyan]http://<server-ip>:{port}[/cyan]")
+        if tunnel_url:
+            panel_lines.append(f"Public URL:   [magenta]{tunnel_url}[/magenta]")
+            panel_lines.append(f"Playground:   [magenta]{tunnel_url}/[/magenta]")
+            panel_lines.append(f"API Docs:     [magenta]{tunnel_url}/docs[/magenta]")
+        else:
+            panel_lines.append(f"API Docs:     [cyan]http://{probe_host}:{port}/docs[/cyan]")
+
+        console.print(Panel("\n".join(panel_lines), title="Systemd Autostart Active", border_style="green"))
+        return
+
+    # 2. Check running deployment
     for name, info in list(deployments.items()):
         pid = info.get("pid")
         if pid and _is_pid_alive(pid):
@@ -997,11 +1124,24 @@ def deploy_command(
         str(port),
     ]
 
-    if foreground:
+    # Foreground Mode
+    if not background:
+        if tunnel:
+            console.print(f"Starting reverse tunnel in background for port {port}...")
+            tunnel_cmd = [
+                sys.executable,
+                str(Path(__file__).resolve()),
+                "tunnel",
+                "--port", str(port),
+                "--background",
+            ]
+            subprocess.run(tunnel_cmd)
+
         console.print(f"Starting server in foreground on http://{host}:{port}...")
         subprocess.run(cmd, env=env)
         return
 
+    # Background Daemon Mode
     log_file = Path(f".server_{role}_{port}.log")
     log_fp = open(log_file, "a", encoding="utf-8")
     proc = subprocess.Popen(
@@ -1031,35 +1171,71 @@ def deploy_command(
         console.print(f"[red]Error:[/red] Server failed to start. Check log file: {log_file}")
         raise typer.Exit(1)
 
+    tunnel_pid = None
+    tunnel_url = None
+    if tunnel:
+        url_file = Path("PUBLIC_URL.txt")
+        try:
+            url_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        worker_cmd = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "tunnel",
+            "--port", str(port),
+            "--host", probe_host,
+            "--daemon-worker",
+        ]
+        with open(TUNNEL_LOG_FILE, "a", encoding="utf-8") as t_log:
+            tunnel_proc = subprocess.Popen(
+                worker_cmd,
+                stdout=t_log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+        tunnel_pid = tunnel_proc.pid
+        TUNNEL_PID_FILE.write_text(str(tunnel_pid), encoding="utf-8")
+
+        start_wait = time.time()
+        while time.time() - start_wait < 10:
+            if url_file.exists():
+                u = url_file.read_text(encoding="utf-8").strip()
+                if u.startswith("http"):
+                    tunnel_url = u
+                    break
+            time.sleep(0.5)
+
     deployments[role] = {
         "role": role,
         "host": host,
         "port": port,
         "pid": proc.pid,
+        "tunnel_pid": tunnel_pid,
+        "tunnel_url": tunnel_url,
         "started_at": datetime.now().isoformat(),
         "log_file": str(log_file),
     }
     _save_deployments(deployments)
 
+    panel_lines = [
+        f"[bold green]Deployed {role}[/bold green]\n",
+        f"Local URL:    [cyan]http://{probe_host}:{port}[/cyan]",
+    ]
     if host in ("0.0.0.0", "::"):
-        panel_content = (
-            f"[bold green]Deployed {role}[/bold green]\n\n"
-            f"Local URL:  [cyan]http://127.0.0.1:{port}[/cyan]\n"
-            f"Remote URL: [cyan]http://<server-ip>:{port}[/cyan]\n"
-            f"PID:        [dim]{proc.pid}[/dim]\n"
-            f"API Docs:   [cyan]http://<server-ip>:{port}/docs[/cyan] (or [cyan]http://127.0.0.1:{port}/docs[/cyan])"
-        )
+        panel_lines.append(f"Remote URL:   [cyan]http://<server-ip>:{port}[/cyan]")
+    if tunnel_url:
+        panel_lines.append(f"Public URL:   [magenta]{tunnel_url}[/magenta]")
+        panel_lines.append(f"Playground:   [magenta]{tunnel_url}/[/magenta]")
+        panel_lines.append(f"API Docs:     [magenta]{tunnel_url}/docs[/magenta]")
     else:
-        panel_content = (
-            f"[bold green]Deployed {role}[/bold green]\n\n"
-            f"URL:      [cyan]http://{host}:{port}[/cyan]\n"
-            f"PID:      [dim]{proc.pid}[/dim]\n"
-            f"API Docs: [cyan]http://{host}:{port}/docs[/cyan]"
-        )
+        panel_lines.append(f"API Docs:     [cyan]http://{probe_host}:{port}/docs[/cyan]")
+    panel_lines.append(f"PID:          [dim]{proc.pid}[/dim]" + (f" (Tunnel PID: [dim]{tunnel_pid}[/dim])" if tunnel_pid else ""))
 
     console.print(
         Panel(
-            panel_content,
+            "\n".join(panel_lines),
             title="Deployment Active",
             border_style="green",
         )
@@ -1067,32 +1243,58 @@ def deploy_command(
 
 
 @app.command("stop")
-def stop_command(role: str = typer.Argument(..., help="Role deployment to stop")):
-    """Stop a running role deployment."""
-    # Unload model weights from Ollama RAM
+def stop_command(
+    role: str = typer.Argument(..., help="Role deployment to stop"),
+    autostart: bool = typer.Option(False, "--autostart", help="Stop and disable systemd autostart service"),
+):
+    """Stop a running role deployment and release model memory."""
     _unload_ollama_model(f"ai-institute-{role}")
 
     deployments = _load_deployments()
-    if role not in deployments:
-        console.print(f"[yellow]No deployment found for role '{role}'.[/yellow]")
-        raise typer.Exit(1)
 
-    info = deployments[role]
-    pid = info.get("pid")
-    if pid and _is_pid_alive(pid):
+    # 1. Check systemd autostart service
+    systemctl_bin = shutil.which("systemctl")
+    is_systemd = autostart or (deployments.get(role, {}).get("autostart", False))
+    if is_systemd and systemctl_bin:
+        service_name = deployments.get(role, {}).get("service") or f"ai-institute-{role}.service"
+        tunnel_svc = deployments.get(role, {}).get("tunnel_service") or f"ai-institute-{role}-tunnel.service"
         try:
-            os.kill(pid, signal.SIGTERM)
-            time.sleep(0.5)
-            if _is_pid_alive(pid):
-                os.kill(pid, signal.SIGKILL)
-            console.print(f"[green]Stopped deployment for {role}[/green] (PID {pid}).")
+            subprocess.run([systemctl_bin, "stop", service_name], capture_output=True)
+            subprocess.run([systemctl_bin, "disable", service_name], capture_output=True)
+            console.print(f"[green]Stopped and disabled systemd service '{service_name}'.[/green]")
+            subprocess.run([systemctl_bin, "stop", tunnel_svc], capture_output=True)
+            subprocess.run([systemctl_bin, "disable", tunnel_svc], capture_output=True)
         except Exception as e:
-            console.print(f"[red]Failed to terminate PID {pid}:[/red] {e}")
-    else:
-        console.print(f"[dim]Deployment process for {role} (PID {pid}) was not running.[/dim]")
+            console.print(f"[yellow]Warning while stopping systemd service:[/yellow] {e}")
 
-    del deployments[role]
-    _save_deployments(deployments)
+    # 2. Check user-space background processes
+    if role in deployments:
+        info = deployments[role]
+        pid = info.get("pid")
+        if pid and _is_pid_alive(pid):
+            try:
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(0.5)
+                if _is_pid_alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+                console.print(f"[green]Stopped deployment for {role}[/green] (PID {pid}).")
+            except Exception as e:
+                console.print(f"[red]Failed to terminate PID {pid}:[/red] {e}")
+
+        tunnel_pid = info.get("tunnel_pid")
+        if tunnel_pid and _is_pid_alive(tunnel_pid):
+            try:
+                os.kill(tunnel_pid, signal.SIGTERM)
+                console.print(f"[green]Stopped associated tunnel[/green] (PID {tunnel_pid}).")
+            except Exception:
+                pass
+
+        del deployments[role]
+        _save_deployments(deployments)
+    else:
+        if not is_systemd:
+            console.print(f"[yellow]No deployment found for role '{role}'.[/yellow]")
+            raise typer.Exit(1)
 
 
 @app.command("status")
@@ -1105,8 +1307,9 @@ def status_command():
 
     table = Table(title="AI-Institute Deployments", border_style="blue")
     table.add_column("Role", style="bold green")
-    table.add_column("URL", style="cyan")
-    table.add_column("PID", style="yellow")
+    table.add_column("Local URL", style="cyan")
+    table.add_column("Public Tunnel", style="magenta")
+    table.add_column("PID / Service", style="yellow")
     table.add_column("Started At", style="dim")
     table.add_column("Status", style="bold")
 
@@ -1115,11 +1318,20 @@ def status_command():
         host = info.get("host", "127.0.0.1")
         port = info.get("port", 8080)
         started_at = info.get("started_at", "unknown")
-        alive = _is_pid_alive(pid) if pid else False
+        is_auto = info.get("autostart", False)
+        tunnel_url = info.get("tunnel_url") or "-"
 
-        status_text = "[green]RUNNING[/green]" if alive else "[red]STOPPED[/red]"
+        if is_auto:
+            svc = info.get("service", "systemd")
+            status_text = "[green]ACTIVE (BOOT)[/green]"
+            pid_col = f"[dim]{svc}[/dim]"
+        else:
+            alive = _is_pid_alive(pid) if pid else False
+            status_text = "[green]RUNNING[/green]" if alive else "[red]STOPPED[/red]"
+            pid_col = str(pid) if pid else "-"
+
         display_host = "<server-ip>" if host in ("0.0.0.0", "::") else host
-        table.add_row(name, f"http://{display_host}:{port}", str(pid), started_at[:19], status_text)
+        table.add_row(name, f"http://{display_host}:{port}", tunnel_url, pid_col, started_at[:19], status_text)
 
     console.print(table)
 
@@ -1391,6 +1603,223 @@ def auto_generate_command(
 
     saved_path = save_training_batch(role_path, valid)
     console.print(f"[bold green]Successfully saved {len(valid)} examples to {saved_path}[/bold green]")
+
+
+TUNNEL_PID_FILE = Path(".tunnel.pid")
+TUNNEL_LOG_FILE = Path(".tunnel.log")
+
+
+@app.command("tunnel")
+def tunnel_command(
+    port: int = typer.Option(8080, "--port", "-p", help="Local server port to expose"),
+    host: str = typer.Option("localhost", "--host", "-h", help="Local target host"),
+    save_url: bool = typer.Option(True, "--save-url/--no-save-url", help="Save live URL to PUBLIC_URL.txt"),
+    background: bool = typer.Option(False, "--background", "-d", help="Run tunnel in background as a daemon"),
+    stop: bool = typer.Option(False, "--stop", help="Stop any running background tunnel"),
+    daemon_worker: bool = typer.Option(False, "--daemon-worker", hidden=True),
+):
+    """Expose local API server via a secure public HTTPS reverse tunnel over port 443 (firewall-friendly)."""
+    # 1. Handle --stop
+    if stop:
+        if not TUNNEL_PID_FILE.exists():
+            console.print("[yellow]No active background tunnel was running.[/yellow]")
+            raise typer.Exit(0)
+
+        stopped = False
+        try:
+            pid = int(TUNNEL_PID_FILE.read_text().strip())
+            if _is_pid_alive(pid):
+                os.kill(pid, signal.SIGTERM)
+                time.sleep(1)
+                if _is_pid_alive(pid):
+                    os.kill(pid, signal.SIGKILL)
+                stopped = True
+        except Exception:
+            pass
+        finally:
+            try:
+                TUNNEL_PID_FILE.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+        if stopped:
+            console.print("[bold green]Public tunnel stopped successfully.[/bold green]")
+        else:
+            console.print("[yellow]Tunnel process was not running (cleaned up stale PID file).[/yellow]")
+        raise typer.Exit(0)
+
+    ssh_bin = shutil.which("ssh")
+    if not ssh_bin:
+        console.print("[red]Error:[/red] 'ssh' binary not found. Please ensure OpenSSH client is installed.")
+        raise typer.Exit(1)
+
+    url_file = Path("PUBLIC_URL.txt")
+
+    # 2. Handle --background / -d launcher
+    if background:
+        if TUNNEL_PID_FILE.exists():
+            try:
+                pid = int(TUNNEL_PID_FILE.read_text().strip())
+                if _is_pid_alive(pid):
+                    console.print(f"[yellow]Tunnel is already running in background (PID {pid}).[/yellow]")
+                    console.print("[dim]Run 'ai-institute tunnel --stop' to terminate it first.[/dim]")
+                    raise typer.Exit(0)
+            except ValueError:
+                pass
+
+        console.print(f"Starting reverse tunnel in background for [cyan]{host}:{port}[/cyan] over port 443...")
+        try:
+            url_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        worker_cmd = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            "tunnel",
+            "--port", str(port),
+            "--host", host,
+            "--daemon-worker",
+        ]
+        if not save_url:
+            worker_cmd.append("--no-save-url")
+
+        with open(TUNNEL_LOG_FILE, "a", encoding="utf-8") as log_f:
+            daemon_proc = subprocess.Popen(
+                worker_cmd,
+                stdout=log_f,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+            )
+
+        TUNNEL_PID_FILE.write_text(str(daemon_proc.pid), encoding="utf-8")
+
+        assigned_url = None
+        start_wait = time.time()
+        while time.time() - start_wait < 10:
+            if not _is_pid_alive(daemon_proc.pid):
+                console.print(f"[red]Error:[/red] Tunnel process exited unexpectedly. Check {TUNNEL_LOG_FILE}.")
+                raise typer.Exit(1)
+
+            if url_file.exists():
+                content = url_file.read_text(encoding="utf-8").strip()
+                if content.startswith("http"):
+                    assigned_url = content
+                    break
+
+            if TUNNEL_LOG_FILE.exists():
+                try:
+                    log_text = TUNNEL_LOG_FILE.read_text(encoding="utf-8")
+                    matches = re.findall(r"https://[a-zA-Z0-9.-]+\.pinggy\.(?:link|net)", log_text)
+                    if matches:
+                        assigned_url = matches[-1]
+                        if save_url:
+                            url_file.write_text(assigned_url + "\n", encoding="utf-8")
+                        break
+                except Exception:
+                    pass
+
+            time.sleep(0.5)
+
+        if assigned_url:
+            panel_text = (
+                f"[bold green]Tunnel is active and running in background![/bold green]\n\n"
+                f"  [bold]Local Target:[/bold]    http://{host}:{port}\n"
+                f"  [bold]Public URL:[/bold]      [cyan]{assigned_url}[/cyan]\n"
+                f"  [bold]Web Playground:[/bold]  [cyan]{assigned_url}/[/cyan]\n"
+                f"  [bold]Swagger Docs:[/bold]    [cyan]{assigned_url}/docs[/cyan]\n"
+                f"  [bold]PID:[/bold]             {daemon_proc.pid}\n\n"
+                f"[dim]Run 'ai-institute tunnel --stop' to shut down the background tunnel.[/dim]"
+            )
+            console.print(Panel(panel_text, title="AI-Institute Public Egress Tunnel", border_style="cyan"))
+        else:
+            console.print(f"[yellow]Tunnel daemon started (PID {daemon_proc.pid}).[/yellow] Public URL may take a few seconds to appear in {url_file.name}.")
+
+        raise typer.Exit(0)
+
+    # 3. Foreground / Daemon Worker Execution Loop
+    cmd = [
+        ssh_bin,
+        "-p", "443",
+        "-o", "StrictHostKeyChecking=no",
+        "-o", "ServerAliveInterval=30",
+        "-o", "ServerAliveCountMax=3",
+        "-R", f"0:{host}:{port}",
+        "a.pinggy.io",
+    ]
+
+    if not daemon_worker:
+        console.print(f"Establishing secure reverse tunnel for [cyan]{host}:{port}[/cyan] over outbound port 443...")
+
+    stop_requested = False
+
+    def handle_sig(sig, frame):
+        nonlocal stop_requested
+        stop_requested = True
+        if not daemon_worker:
+            console.print("\n[yellow]Shutting down tunnel...[/yellow]")
+
+    signal.signal(signal.SIGINT, handle_sig)
+    signal.signal(signal.SIGTERM, handle_sig)
+
+    active_url = None
+
+    while not stop_requested:
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except Exception as e:
+            if not daemon_worker:
+                console.print(f"[red]Failed to launch tunnel process:[/red] {e}")
+            time.sleep(3)
+            continue
+
+        while not stop_requested:
+            line = proc.stdout.readline()
+            if not line:
+                if proc.poll() is not None:
+                    break
+                time.sleep(0.1)
+                continue
+
+            matches = re.findall(r"https://[a-zA-Z0-9.-]+\.pinggy\.(?:link|net)", line)
+            if matches and matches[0] != active_url:
+                active_url = matches[0]
+                if save_url:
+                    try:
+                        url_file.write_text(active_url + "\n", encoding="utf-8")
+                    except Exception:
+                        pass
+
+                if not daemon_worker:
+                    panel_text = (
+                        f"[bold green]Tunnel is active and live![/bold green]\n\n"
+                        f"  [bold]Local Target:[/bold]    http://{host}:{port}\n"
+                        f"  [bold]Public URL:[/bold]      [cyan]{active_url}[/cyan]\n"
+                        f"  [bold]Web Playground:[/bold]  [cyan]{active_url}/[/cyan]\n"
+                        f"  [bold]Swagger Docs:[/bold]    [cyan]{active_url}/docs[/cyan]\n"
+                        f"  [bold]ReDoc:[/bold]           [cyan]{active_url}/redoc[/cyan]\n\n"
+                        f"[dim]Press Ctrl+C to close the tunnel.[/dim]"
+                    )
+                    console.print(Panel(panel_text, title="AI-Institute Public Egress Tunnel", border_style="cyan"))
+
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+        if not stop_requested:
+            time.sleep(3)
+
+    if not daemon_worker:
+        console.print("[green]Tunnel closed cleanly.[/green]")
 
 
 if __name__ == "__main__":

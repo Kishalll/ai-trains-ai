@@ -231,24 +231,28 @@ Runs automated adversarial test attacks against the role defense stack.
 ### Deployment and Lifecycle
 
 #### `deploy`
-Starts the Uvicorn REST API server in the background.
+Starts the Uvicorn REST API server with optional public tunnel and 24/7 reboot autostart.
 ```bash
-.venv/bin/ai-institute deploy <role> [--port <int>] [--host <str>] [--foreground]
+.venv/bin/ai-institute deploy <role> [--port 8080] [--host 127.0.0.1] [--background/-d] [--tunnel] [--autostart]
 ```
-- Automatically checks Ollama liveness and executes pipeline pre-warming.
-- Records PID and host information in `.deployments.json`.
+- `--port`, `-p`: Port to run the API server on (default: `8080`).
+- `--host`, `-h`: Host interface to bind to (default: `127.0.0.1`). Use `0.0.0.0` for remote server access.
+- `--background`, `-d`: Runs in the background as a daemon (default: true). Use `--foreground` to run interactively.
+- `--tunnel`: Automatically establishes a secure public HTTPS reverse tunnel over port 443 and outputs public URLs.
+- `--autostart`: Installs and enables a systemd service (`ai-institute-<role>.service`) for 24/7 autostart on system boot.
 
 #### `status`
-Displays active server deployments and process status.
+Displays active server deployments, public tunnel links, and process status.
 ```bash
 .venv/bin/ai-institute status
 ```
 
 #### `stop`
-Gracefully stops a running deployment and unloads the model from Ollama RAM.
+Gracefully stops a running deployment, shuts down any associated tunnel, and unloads the model from Ollama RAM.
 ```bash
-.venv/bin/ai-institute stop <role>
+.venv/bin/ai-institute stop <role> [--autostart]
 ```
+- `--autostart`: Stops and disables the systemd autostart service if previously configured.
 
 #### `backup`
 Packages a role directory (config, tools, and pre-computed vector store) into a tarball.
@@ -269,11 +273,28 @@ Bundles the runtime wheel, role data archive copy, Modelfile, and automated `ins
 ```
 (Alternatively: `ai-institute package librarian` with virtual environment activated)
 
+#### `tunnel`
+Exposes the local API server to the public internet via a secure HTTPS reverse tunnel over outbound port 443 (firewall-friendly).
+```bash
+.venv/bin/ai-institute tunnel [--port 8080] [--host localhost] [--background/-d] [--stop] [--save-url/--no-save-url]
+```
+- `--port`, `-p`: Local server port to expose (default: `8080`).
+- `--host`, `-h`: Local target host (default: `localhost`).
+- `--background`, `-d`: Runs the tunnel in the background as a detached daemon.
+- `--stop`: Stops any running background tunnel daemon.
+- `--save-url`: Saves the live public URL to `PUBLIC_URL.txt` (default: true).
+
 ---
 
 ## REST API Reference
 
-The deployed API exposes the following endpoints under `/api/v1`:
+The deployed server provides an interactive Web Playground, enhanced Swagger documentation, and REST endpoints:
+
+- **Interactive Web Playground (`GET /`)**: Responsive dark-themed chat interface with dynamic role selection, latency counters (`⏱️ X.XXs`), source attribution chips, and session continuity.
+- **Swagger Documentation (`GET /docs`)**: Customized OpenAPI documentation with Monokai styling, execution duration tracking, and collapsible schemas.
+- **ReDoc (`GET /redoc`)**: Structured OpenAPI specification viewer.
+
+The API exposes the following endpoints under `/api/v1`:
 
 ### 1. Chat Completion (`POST /api/v1/chat`)
 Sends a message and returns the complete response after generation finishes.

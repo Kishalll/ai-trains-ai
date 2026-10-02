@@ -58,10 +58,11 @@ ai-institute/
 ├── config.yaml                 # Global framework configuration
 ├── pyproject.toml              # Packaging specification for pip and standalone wheel builds
 ├── deps.py                     # Lazy dependency checker and installer
-├── cli.py                      # Typer CLI implementation containing all 25 commands
+├── cli.py                      # Typer CLI implementation containing all 26 commands
 ├── .deployments.json           # Active server deployments registry
 ├── README.md                   # User-facing overview and CLI reference
 ├── CONTRIBUTING.md             # Technical architecture and guide (this file)
+├── scripts/                    # Deployment templates and service scripts
 │
 ├── api/                        # REST API implementation
 │   ├── __init__.py
@@ -324,10 +325,19 @@ Deploying to a production server requires no repository cloning and avoids insta
 
 3. Start the background API service:
    ```bash
+   # Standard local background deployment:
    ai-institute deploy librarian --port 8080 --host 0.0.0.0
+
+   # Or deploy with integrated public reverse tunnel for your team:
+   ai-institute deploy librarian --port 8080 --host 0.0.0.0 --tunnel
+
+   # Or deploy with 24/7 OS systemd autostart on system boot:
+   ai-institute deploy librarian --port 8080 --host 0.0.0.0 --tunnel --autostart
    ```
-   Note on network interfaces:
-   - Default host (`127.0.0.1`): Only listens to requests originating from inside the machine itself. Use this for local machine testing.
+   Note on deployment options:
+   - `--background` / `-d` (default true): Runs in the background as a detached process.
+   - `--tunnel`: Establishes an outbound port 443 reverse SSH tunnel and outputs the public HTTPS URL.
+   - `--autostart`: Creates and enables systemd service units for 24/7 automatic reboot persistence.
    - Remote host (`0.0.0.0`): Listens on all available network interfaces. Always pass `--host 0.0.0.0` when hosting on a remote server, virtual machine, or container so external clients and web browsers can connect over the network.
 
 4. Check active deployments:
@@ -338,7 +348,43 @@ Deploying to a production server requires no repository cloning and avoids insta
 5. Stop the deployment and release model memory:
    ```bash
    ai-institute stop librarian
+
+   # If deployed with --autostart, also stops and disables the systemd services:
+   ai-institute stop librarian --autostart
    ```
+
+6. Expose the deployment publicly (Firewall-Resilient Reverse Tunnel):
+   In institutional and enterprise hosting environments, inbound ports (such as 8080) are frequently blocked by network firewalls, and outbound tunneling tools (like Cloudflare Tunnel or standard SSH) are restricted or blocked on ports 22 or UDP/7844.
+
+   AI-Institute includes a built-in reverse tunnel operating over outbound HTTPS port 443:
+   ```bash
+   # Launch in foreground
+   ai-institute tunnel --port 8080
+
+   # Or launch in background as a daemon
+   ai-institute tunnel --port 8080 -d
+
+   # Stop any running background tunnel
+   ai-institute tunnel --stop
+   ```
+
+   **CLI Tunnel Options Reference:**
+
+   | Option | Flag | Type | Default | Description |
+   | :--- | :--- | :--- | :--- | :--- |
+   | `--port` | `-p` | `int` | `8080` | Local port of the running API server to expose. |
+   | `--host` | `-h` | `str` | `localhost` | Local target host address to forward traffic to. |
+   | `--background` | `-d` | `bool` | `False` | Detaches the tunnel process and runs it in the background as a daemon. |
+   | `--stop` | — | `bool` | `False` | Gracefully stops the active background tunnel daemon recorded in `.tunnel.pid`. |
+   | `--save-url` / `--no-save-url` | — | `bool` | `True` | Writes the assigned live HTTPS address to `PUBLIC_URL.txt` (git-ignored). |
+
+   **Key Technical Features:**
+   - **Port 443 Egress**: Establishes a secure reverse SSH tunnel through `a.pinggy.io:443`, bypassing campus hardware firewalls (e.g., Fortinet FortiGate) without requiring root network privileges or open inbound ports.
+   - **Background Daemon (`-d` / `--background`)**: Spawns the tunnel detached in the background, prints the assigned public URLs and PID, and returns control to your terminal.
+   - **Clean Stop (`--stop`)**: Terminates running background tunnel processes and cleans up `.tunnel.pid`.
+   - **Live Ingress URLs**: Outputs the assigned public HTTPS address, dark-mode web playground URL (`/`), and interactive Swagger documentation URL (`/docs`).
+   - **URL Synchronization**: Automatically syncs the active tunnel URL into `PUBLIC_URL.txt` (which is git-ignored).
+   - **Systemd Daemonization**: For 24/7 background operation managed by OS init, a systemd template is provided at `scripts/ai-institute-tunnel.service.template`.
 
 ---
 

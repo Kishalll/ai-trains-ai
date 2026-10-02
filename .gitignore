@@ -26,6 +26,8 @@ docs/
 
 # Deployments and runtime logs
 .deployments.json
+PUBLIC_URL.txt
+.tunnel.pid
 *.log
 .server_*.log
 
