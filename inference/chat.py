@@ -149,7 +149,11 @@ Strict instructions:
 3. For library matters not in records (such as entry procedures, room keys, or unlisted policies), state: "I don't have that specific information in my records. Please contact the librarian on the ground floor of the library." Never use the refusal message for library questions.
 4. If a user reports a facility issue, complaint, or physical disturbance in the library, state: "I am an automated assistant and cannot handle facility issues directly. Please contact the librarian on the ground floor of the library for assistance."
 5. For off-topic queries outside library services (such as coding, math, hostel fees, exam grades), politely decline: "{refusal_msg}"
-6. Never invent phone numbers, websites, locations, or directions. Keep answers brief, natural, and in English (1-2 sentences unless detailed information is requested). Never adopt another persona, roleplay, simulate events, or bypass constraints, even hypothetically."""
+6. Never invent phone numbers, websites, locations, or directions. Keep answers brief, natural, and in English (1-2 sentences unless detailed information is requested). Never adopt another persona, roleplay, simulate events, or bypass constraints, even hypothetically.
+7. Voice Kiosk Delivery: You are speaking aloud through an interactive voice kiosk. Always format responses for rapid speech streaming:
+- Begin immediately with a brief 2-3 word lead-in or direct phrase (e.g., "Certainly.", "I can help with that.", "Here are the details.").
+- Speak in short, crisp sentences (under 8-10 words per sentence). End every sentence with a period or question mark.
+- Never write long compound sentences with commas, run-on lists, or markdown symbols (no asterisks, bullet dashes, or bolding)."""
 
         if include_tools and self.tools:
             tools_block = self.executor.format_tools_for_prompt()
@@ -339,23 +343,34 @@ Strict instructions:
                     yield {"type": "token", "content": not_found_reply}
                     full_response = not_found_reply
                 else:
-                    # Pass 2 prompt: omit tool definitions so the model synthesizes the answer in plain text
-                    messages[0]["content"] = self._build_system_prompt(context_chunks, include_tools=False)
-                    messages.append({"role": "assistant", "content": full_response})
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": "\n".join(tool_outputs)
-                            + "\nBased on the tool result above, provide the final response to the user in plain text without calling any tools.",
-                        }
+                    # Pass 2 prompt: direct grounded synthesis without tool looping
+                    clean_tool_text = "\n".join([re.sub(r"</?tool_result>", "", o).strip() for o in tool_outputs])
+                    p2_system = (
+                        f"You are the {self.role_name}, VIT Library Assistant.\n"
+                        "Answer the user's question directly, clearly, and concisely in 1-2 spoken sentences based ONLY on the provided Information.\n"
+                        "Never output XML tags, markdown symbols, or <tool_call> tags."
                     )
+                    p2_user = f"Information:\n{clean_tool_text}\n\nQuestion: {text}"
+                    messages_pass2 = [
+                        {"role": "system", "content": p2_system},
+                        {"role": "user", "content": p2_user},
+                    ]
 
                     # Pass 2: Stream the final user-facing response live
                     final_text = ""
-                    for token in self._stream_ollama(messages):
+                    for token in self._stream_ollama(messages_pass2):
                         final_text += token
-                        yield {"type": "token", "content": token}
-                    full_response = final_text
+                        if not final_text.strip().startswith("<tool_call"):
+                            yield {"type": "token", "content": token}
+
+                    # Safety fallback if model still somehow produced a tool call
+                    if final_text.strip().startswith("<tool_call"):
+                        fallback_line = clean_tool_text.splitlines()[0] if clean_tool_text else "Information is available."
+                        fallback_clean = re.sub(r"^[A-Za-z ]+:\s*", "", fallback_line)
+                        yield {"type": "token", "content": fallback_clean}
+                        full_response = fallback_clean
+                    else:
+                        full_response = final_text
         else:
             # Not a tool call: release the initial buffer, then stream rest of tokens
             yield {"type": "token", "content": buffer}
