@@ -33,7 +33,7 @@ from training.export import export_role_to_ollama
 from inference.chat import ChatOrchestrator
 from inference.history import clear_history, get_history
 
-app = typer.Typer(help="AI-Institute: Role-locked college AI assistants")
+app = typer.Typer(help="AI-Trains-AI: Role-locked specialized AI assistants")
 console = Console()
 
 DEFAULT_CONFIG_PATH = Path("config.yaml")

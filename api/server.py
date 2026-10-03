@@ -29,9 +29,9 @@ def create_app(roles_dir: Path | str = "roles", prewarm_role: str | None = None)
                 pass
 
     app = FastAPI(
-        title="AI-Institute API",
+        title="AI-Trains-AI API",
         version="1.0.0",
-        description="REST API for role-locked college AI assistants",
+        description="REST API for role-locked specialized AI assistants",
         lifespan=lifespan,
         docs_url="/docs",
         redoc_url="/redoc",
@@ -64,7 +64,7 @@ def create_app(roles_dir: Path | str = "roles", prewarm_role: str | None = None)
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>AI-Institute | Campus Assistant Playground</title>
+  <title>AI-Trains-AI | Assistant Playground</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -333,10 +333,10 @@ def create_app(roles_dir: Path | str = "roles", prewarm_role: str | None = None)
 <body>
   <header>
     <div class="brand">
-      <div class="brand-icon">🏛️</div>
+      <div class="brand-icon">🤖</div>
       <div class="brand-text">
-        <h1>AI-Institute | Assistant Playground</h1>
-        <p>Role-Locked Campus AI Assistant Framework</p>
+        <h1>AI-Trains-AI | Assistant Playground</h1>
+        <p>Role-Locked Specialized AI Assistant Framework</p>
       </div>
     </div>
     <div class="nav-controls">
@@ -360,13 +360,13 @@ def create_app(roles_dir: Path | str = "roles", prewarm_role: str | None = None)
 
     <div class="suggestions" id="suggestions-bar">
       <button class="suggestion-chip" onclick="quickSend('Tell me about your role and what you can assist with.')">ℹ️ Role Scope</button>
-      <button class="suggestion-chip" onclick="quickSend('What guidelines or rules do you follow?')">📋 Policies & Guidelines</button>
-      <button class="suggestion-chip" onclick="quickSend('Who should I contact for help with facility matters?')">📍 Contacts</button>
+      <button class="suggestion-chip" onclick="quickSend('What guidelines, policies, or rules do you follow?')">📋 Policies & Guidelines</button>
+      <button class="suggestion-chip" onclick="quickSend('What tools, data sources, or capabilities do you have access to?')">⚡ Capabilities & Tools</button>
       <button class="suggestion-chip" onclick="quickSend('Solve this math equation: 2x + 5 = 15')">🛑 Test Scope Refusal</button>
     </div>
 
     <form class="input-bar" id="chat-form" onsubmit="handleSend(event)">
-      <input type="text" id="prompt-input" placeholder="Ask about campus services, policies, or records..." autocomplete="off">
+      <input type="text" id="prompt-input" placeholder="Ask a question or enter a query for this assistant..." autocomplete="off">
       <button type="submit" class="send-btn" id="send-btn">Send</button>
     </form>
   </main>
@@ -421,7 +421,7 @@ def create_app(roles_dir: Path | str = "roles", prewarm_role: str | None = None)
         roleSelect.innerHTML = '';
         if (!roles || roles.length === 0) {
           roleSelect.innerHTML = '<option value="">(No roles configured)</option>';
-          appendMessage('assistant', 'Welcome to AI-Institute! No assistant roles are configured yet.\\n\\nTo initialize a role, run:\\n  ai-institute create-role <name> -d "Description"');
+          appendMessage('assistant', 'Welcome to AI-Trains-AI! No assistant roles are configured yet.\\n\\nTo initialize a role, run:\\n  ai-trains-ai create-role <name> -d "Description"');
           return;
         }
         roles.forEach(r => {

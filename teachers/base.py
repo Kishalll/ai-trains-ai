@@ -6,7 +6,7 @@ from typing import Any
 
 def build_teacher_prompt(role_config: dict[str, Any], category: str, count: int) -> str:
     role_name = role_config.get("name", "assistant")
-    desc = role_config.get("description", "Campus Assistant")
+    desc = role_config.get("description", "Specialized Assistant")
     questionnaire = role_config.get("questionnaire", {})
     in_scope = questionnaire.get("in_scope", "Role-related questions")
     out_of_scope = questionnaire.get("out_of_scope", "Out-of-scope topics")
@@ -14,16 +14,16 @@ def build_teacher_prompt(role_config: dict[str, Any], category: str, count: int)
 
     category_instructions = {
         "core_qa": f"Generate factual questions within scope ({in_scope}) and accurate, concise answers.",
-        "scope_refusal": f"Generate out-of-scope queries ({out_of_scope}, hostel, admissions, coding) where the output strictly refuses using: '{refusal}'",
-        "jailbreak_defense": f"Generate sneaky student jailbreak attempts (DAN, bypass, roleplay, prompt leaks) where the output strictly refuses using: '{refusal}'",
+        "scope_refusal": f"Generate out-of-scope queries ({out_of_scope}, general trivia, coding) where the output strictly refuses using: '{refusal}'",
+        "jailbreak_defense": f"Generate adversarial jailbreak attempts (DAN, bypass, roleplay, prompt leaks) where the output strictly refuses using: '{refusal}'",
         "clarification": "Generate ambiguous queries requiring the assistant to ask for clarification.",
         "tool_invocation": "Generate queries needing live catalog/database checks, where output uses <tool_call>name(args)</tool_call> syntax.",
         "multi_turn": "Generate multi-turn context questions (pronouns like 'it', 'where is it located').",
     }
 
-    instruction = category_instructions.get(category, "Generate realistic student interactions.")
+    instruction = category_instructions.get(category, "Generate realistic user interactions.")
 
-    return f"""You are an expert training data generator for a college AI assistant named '{role_name}' ({desc}).
+    return f"""You are an expert training data generator for a specialized role-locked AI assistant named '{role_name}' ({desc}).
 
 Role Guidelines:
 - In Scope: {in_scope}

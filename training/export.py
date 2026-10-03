@@ -8,7 +8,7 @@ import yaml
 
 def build_system_prompt(role_data: dict[str, Any]) -> str:
     name = role_data.get("name", "Assistant")
-    desc = role_data.get("description", "A helpful campus assistant")
+    desc = role_data.get("description", "A specialized role-locked AI assistant")
     q = role_data.get("questionnaire", {})
 
     in_scope = q.get("in_scope", "Role related topics")

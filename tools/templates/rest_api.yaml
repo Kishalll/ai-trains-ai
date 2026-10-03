@@ -1,21 +1,21 @@
 # REST API Tool Definition
 tools:
-  - name: check_bus_schedule
+  - name: check_service_status
     type: api
-    description: "Check campus shuttle bus timings and routes"
-    url: "https://api.campus.edu/transport/shuttle"
+    description: "Check external service operational status and schedules"
+    url: "https://api.example.com/services/status"
     method: GET
     parameters:
-      - name: route
+      - name: service_id
         type: string
         required: false
-        description: "Bus route name or stop name"
+        description: "Service name or identifier"
     response_template: |
-      {% if response.schedules %}
-      Campus Shuttle Timings:
-      {% for item in response.schedules %}
-      - Route {{item.route}}: Departs {{item.departure}} from {{item.origin}} -> Arrives {{item.arrival}} at {{item.destination}}
+      {% if response.services %}
+      Service Status & Timings:
+      {% for item in response.services %}
+      - {{item.name}}: Status {{item.status}} (Next window: {{item.window}})
       {% endfor %}
       {% else %}
-      No active bus schedule returned for route.
+      No active service status returned.
       {% endif %}

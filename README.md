@@ -12,7 +12,7 @@
 
 AI-Institute is a framework for building, training, evaluating, and deploying role-locked AI assistants. A place where AI teaches AI. 
 
-Generic large language models hallucinate facts, give conflicting answers, leak instructions, and wander off topic. AI-Institute solves this by constraining small open models (such as Qwen2.5 1.5B and 3B) into strict campus personas (such as a library assistant, registrar, or departmental help desk) through fine-tuning, retrieval-augmented generation, tool calling, and multi-layer defenses.
+Generic large language models hallucinate facts, give conflicting answers, leak instructions, and wander off topic. AI-Institute solves this by constraining small open models (such as Qwen2.5 1.5B and 3B) into strict specialized personas (such as a domain expert, policy assistant, or technical help desk) through fine-tuning, retrieval-augmented generation, tool calling, and multi-layer defenses.
 
 ---
 
@@ -25,11 +25,11 @@ Every user message passes through a 4-layer defense pipeline managed by the `Cha
    - Regional script detection: Catches non-English scripts (Tamil, Telugu, Malayalam, Kannada, Devanagari) and returns a polite English redirection.
    - Transliterated text detection: Identifies romanized regional slang (Hinglish, Tanglish, Manglish) using token matching and redirects to English.
    - Jailbreak filtering: Intercepts persona breaks, instruction override attempts, DAN patterns, and developer mode bypasses.
-   - Role-specific off-topic regex: Blocks out-of-scope queries configured in the role definition (for example, rejecting hostel fee questions in a library assistant).
+   - Role-specific off-topic regex: Blocks out-of-scope queries configured in the role definition (for example, rejecting billing questions in an IT support assistant).
    - Early exit: Blocked queries return an instant refusal without querying the LLM or vector store.
 
 2. Layer 2: Fine-Tuned Student Model (`inference/chat.py` via Ollama)
-   - Small open models (Qwen2.5 1.5B or 3B) fine-tuned using LoRA on campus QA, polite in-character refusals, and structured tool invocation patterns.
+   - Small open models (Qwen2.5 1.5B or 3B) fine-tuned using LoRA on specialized domain QA, polite in-character refusals, and structured tool invocation patterns.
    - Refuses out-of-scope topics politely even when adversarial prompts bypass regex filters.
    - Emits structured tool calls (`<tool_call>name(param="value")</tool_call>`) when real-time external data is needed.
 
@@ -65,7 +65,7 @@ Every user message passes through a 4-layer defense pipeline managed by the `Cha
 - REST API Server: Production-ready FastAPI service with health checks, role discovery, and Server-Sent Events (SSE) live token streaming.
 - Document-Aware Pre-Warming: Preloads document context and system prompts into Ollama's KV cache on startup, dropping first-turn CPU latency from ~8s to under 2s and GPU response times to ~0.4s.
 - Automatic Memory Lifecycle: Uses `keep_alive: -1` during runtime to lock models in GPU VRAM or system RAM, with a 120s warmup ceiling to accommodate cloud storage cold starts. Evicts models (`keep_alive: 0`) and flushes PyTorch GPU cache (`torch.cuda.empty_cache()`) on shutdown to free memory cleanly.
-- Adversarial Pentest Suite: Built-in automated security evaluation testing 50+ college-specific attack vectors across all defense layers.
+- Adversarial Pentest Suite: Built-in automated security evaluation testing 50+ adversarial attack vectors across all defense layers.
 - Complete Portability: Backup and restore entire role bundles (configs, tools, and pre-computed vector stores) as compressed archives.
 
 ---

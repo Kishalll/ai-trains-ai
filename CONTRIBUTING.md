@@ -373,7 +373,7 @@ Deploying to a production server requires no repository cloning and avoids insta
    ```
 
    **Key Technical Features:**
-   - **Port 443 Egress**: Establishes a secure reverse SSH tunnel through `a.pinggy.io:443`, bypassing campus hardware firewalls (e.g., Fortinet FortiGate) without requiring root network privileges or open inbound ports.
+   - **Port 443 Egress**: Establishes a secure reverse SSH tunnel through `a.pinggy.io:443`, bypassing restrictive enterprise hardware firewalls (e.g., Fortinet FortiGate) without requiring root network privileges or open inbound ports.
    - **Background Daemon (`-d` / `--background`)**: `deploy` spawns the tunnel detached in the background, prints the assigned public URLs and PID, and returns control to your terminal.
    - **Clean Stop (`stop <role>`)**: Terminates running background tunnel processes and cleans up `.tunnel.pid`.
    - **Live Ingress URLs**: Outputs the assigned public HTTPS address, dark-mode web playground URL (`/`), and interactive Swagger documentation URL (`/docs`).

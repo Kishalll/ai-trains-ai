@@ -9,7 +9,7 @@ Scope definition:
 - Preferred refusal style: {{refusal_message}}
 
 ## Instructions
-1. Generate queries that ask about topics completely outside this assistant's scope (e.g. general trivia, coding questions, essays, jokes, weather, other campus departments).
+1. Generate queries that ask about topics completely outside this assistant's scope (e.g. general trivia, coding questions, essays, jokes, weather, unrelated domains or departments).
 2. The assistant must politely refuse and redirect the user back to the role's actual scope.
 3. Keep the tone courteous, brief, and never preachy.
 4. Format your output strictly as a JSON array of objects.
@@ -20,7 +20,7 @@ Scope definition:
   {
     "category": "refusal",
     "user": "Can you help me solve this calculus differential equation?",
-    "assistant": "I can only help with library-related queries like book availability, timings, and borrowing rules. How can I assist you with the library?"
+    "assistant": "I can only assist with queries within my defined role scope. How can I assist you today?"
   }
 ]
 ```

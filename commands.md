@@ -81,10 +81,10 @@ ai-institute create-role <name> --description "<desc>" [OPTIONS]
 **Examples:**
 ```bash
 # Basic role creation
-ai-institute create-role librarian -d "VIT Campus Library Assistant"
+ai-institute create-role assistant -d "Domain Knowledge Assistant"
 
 # Specify a lighter model and guided teacher mode
-ai-institute create-role proctor -d "Hostel Discipline Assistant" -m qwen2.5:1.5b -t guided
+ai-institute create-role advisor -d "Technical Policy Assistant" -m qwen2.5:1.5b -t guided
 ```
 
 ---
@@ -164,7 +164,7 @@ ai-institute add-data <role> [OPTIONS]
 ai-institute add-data librarian -f docs/library_rules.txt
 
 # Bulk ingest a directory
-ai-institute add-data librarian -d /data/campus_policies/
+ai-institute add-data librarian -d /data/policies/
 ```
 
 ---
@@ -430,7 +430,7 @@ ai-institute test <role> [OPTIONS]
 ---
 
 ### `pentest`
-Executes an automated adversarial security benchmark using 50+ college-specific attack vectors across prompt leaks, jailbreaks, regional slang, and math solvers.
+Executes an automated adversarial security benchmark using 50+ adversarial attack vectors across prompt leaks, jailbreaks, regional slang, and math solvers.
 
 **Usage:**
 ```bash
