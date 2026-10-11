@@ -22,17 +22,22 @@ ChatOrchestrator (`inference/chat.py`)
         │        ├── Non-English script regex (Tamil, Telugu, Malayalam, Kannada, Devanagari)
         │        ├── Transliterated slang token matching (Hinglish, Tanglish, Manglish)
         │        ├── Adversarial jailbreak regex
-        │        └── Role off-topic patterns
+        │        └── Class A & B off-topic patterns
+        │
+        ├──► Layer 1.5: System-1 Decision Engine (`inference/decision_engine.py`)
+        │        ├── Unit-normalized sentence embeddings (dot-product similarity)
+        │        ├── Exemplar cluster matching & priority gating
+        │        └── Sub-20ms instant reflex responses (greetings, ack, immediate refusal)
+        │
+        ├──► Dialog State Tracking (`inference/chat.py`, `inference/history.py`)
+        │        └── Contextual confirmation & word-boundary compound rejection regex
         │
         ├──► Layer 3: Context Retrieval (`inference/rag.py`)
-        │        ├── Local query embedding (`data_processing/embedder.py`)
-        │        └── Cosine similarity search in ChromaDB vector store
+        │        ├── Local query embedding with CPU fallback (`data_processing/embedder.py`)
+        │        └── Distance thresholding cutoff (distance <= 0.85, similarity >= 0.20)
         │
-        ├──► Conversation State (`inference/history.py`)
-        │        └── Recent turns loaded from SQLite (`conversations.db`)
-        │
-        ├──► Layer 2: Ollama Inference (`ai-institute-<role>:<tier>`)
-        │        ├── Pass 1: Stream inspection & buffer check
+        ├──► Layer 2: Ollama Student Inference (`ai-institute-<role>:<tier>`)
+        │        ├── Pass 1: Stream inspection & tool detection
         │        │      ├── Normal response: streams live to caller
         │        │      └── Tool call detected: suppresses streaming
         │        │
@@ -51,13 +56,13 @@ ChatOrchestrator (`inference/chat.py`)
 ## 2. Directory Structure and File Reference
 
 ```text
-ai-institute/
+ai-trains-ai/
 ├── .venv/                      # Python virtual environment (ignored in git)
 ├── .gitignore                  # Git ignore rules
 ├── requirements.txt            # Core runtime dependencies (typer, pyyaml, rich, jinja2)
 ├── config.yaml                 # Global framework configuration
 ├── pyproject.toml              # Packaging specification for pip and standalone wheel builds
-├── cli.py                      # Typer CLI implementation containing all 26 commands
+├── cli.py                      # Typer CLI implementation containing all 28 commands
 ├── .deployments.json           # Active server deployments registry
 ├── PUBLIC_URL.txt              # Live public reverse tunnel URL (synced from tunnel daemon)
 ├── commands.md                 # Complete CLI command reference and options guide
@@ -78,20 +83,23 @@ ai-institute/
 │   ├── __init__.py
 │   ├── ingest.py               # Document loaders for TXT, MD, CSV, JSON, and PDF
 │   ├── chunker.py              # Sentence/paragraph chunker with configurable overlap
-│   └── embedder.py             # SentenceTransformers embedding model wrapper
+│   └── embedder.py             # SentenceTransformers embedding model wrapper with CUDA OOM fallback
 │
 ├── inference/                  # Core inference runtime and defense layers
 │   ├── __init__.py
+│   ├── calibration.py          # Semantic similarity calibration tool and overlap auditor
 │   ├── chat.py                 # ChatOrchestrator managing multi-pass flow and streaming
-│   ├── guardrails.py           # Layer 1 input validation and pattern blocking
+│   ├── decision_engine.py      # Laya Decision Engine for System-1 fast reflexes (<20ms)
+│   ├── guardrails.py           # Layer 1 input validation, Class A/B refusals, language rules
 │   ├── history.py              # SQLite multi-turn conversation storage
 │   ├── output_filter.py        # Layer 4 response sanitization and leak redaction
-│   └── rag.py                  # ChromaDB vector store interface per role
+│   ├── rag.py                  # ChromaDB vector store interface per role with distance gating
+│   └── vram_manager.py         # Hardware GPU VRAM budgeting and multi-role memory manager
 │
 ├── tools/                      # Tool execution framework
 │   ├── __init__.py
 │   ├── base.py                 # Base Tool abstract class with Jinja2 rendering
-│   ├── db_tool.py              # Parameterized SQL query execution for SQLite and MySQL
+│   ├── db_tool.py              # SQL execution with conversational cleaning and morphological fuzzy matching
 │   ├── api_tool.py             # HTTP GET/POST external API integrations
 │   ├── file_tool.py            # Local CSV and JSON tabular search
 │   ├── static_tool.py          # Fixed policy and FAQ responses
@@ -108,13 +116,13 @@ ai-institute/
 │
 ├── teachers/                   # Synthetic dataset generation
 │   ├── __init__.py
-│   ├── base.py                 # Abstract teacher class and JSON parsing logic
+│   ├── base.py                 # Abstract teacher class, prompt synthesis, exemplar parsing
 │   ├── ollama_teacher.py       # Local Ollama structured generator
 │   ├── nim_teacher.py          # NVIDIA NIM API generator
-│   ├── gemini_teacher.py       # Google Gemini API generator
+│   ├── gemini.py               # Google Gemini API generator
 │   ├── openai_teacher.py       # OpenAI API generator
 │   ├── factory.py              # Provider registry factory
-│   └── prompts/                # Guided-mode generation templates
+│   └── prompts/                # Guided-mode generation templates (including 08_exemplars.md)
 │
 └── roles/                      # Active assistant roles directory
     └── <role_name>/

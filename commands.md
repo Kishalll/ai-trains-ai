@@ -1,6 +1,6 @@
-# AI-Institute CLI Command Reference
+# AI-Trains-AI CLI Command Reference
 
-This document provides a comprehensive reference for all 26 commands implemented in the `ai-institute` CLI ([`cli.py`](file:///root/ai-trains-ai/cli.py)).
+This document provides a comprehensive reference for all 28 commands implemented in the `ai-trains-ai` CLI ([`cli.py`](file:///root/ai-trains-ai/cli.py)).
 
 ---
 
@@ -10,10 +10,10 @@ All commands can be executed using either the active virtual environment or dire
 
 ```bash
 # With virtual environment activated:
-ai-institute <command> [OPTIONS] [ARGUMENTS]
+ai-trains-ai <command> [OPTIONS] [ARGUMENTS]
 
 # Or directly through virtual environment binary:
-.venv/bin/ai-institute <command> [OPTIONS] [ARGUMENTS]
+.venv/bin/ai-trains-ai <command> [OPTIONS] [ARGUMENTS]
 ```
 
 ---
@@ -37,6 +37,7 @@ ai-institute <command> [OPTIONS] [ARGUMENTS]
   - [`generate-prompts`](#generate-prompts)
   - [`generate-playbook`](#generate-playbook)
   - [`auto-generate`](#auto-generate)
+  - [`generate-exemplars`](#generate-exemplars)
 - [4. Fine-Tuning & Model Registration](#4-fine-tuning--model-registration)
   - [`train`](#train)
   - [`train-status`](#train-status)
@@ -45,6 +46,7 @@ ai-institute <command> [OPTIONS] [ARGUMENTS]
   - [`query`](#query)
   - [`test`](#test)
   - [`pentest`](#pentest)
+  - [`calibrate`](#calibrate)
 - [6. Deployment, Public Tunneling & OS Autostart](#6-deployment-public-tunneling--os-autostart)
   - [`deploy`](#deploy)
   - [`status`](#status)
@@ -321,6 +323,38 @@ ai-institute auto-generate <role> [OPTIONS]
 
 ---
 
+### `generate-exemplars`
+Generates System-1 Decision Engine semantic exemplars using a teacher LLM to populate or expand `roles/<role>/decision_engine.yaml`.
+
+**Usage:**
+```bash
+ai-trains-ai generate-exemplars <role> [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `role` | `string` | **Yes** | Target assistant role name. |
+
+**Options:**
+| Option | Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `--provider` | `-p` | `string` | `ollama` | Teacher provider: `ollama`, `nim`, `gemini`, or `openai`. |
+| `--model` | `-m` | `string` | `None` | Model name override for the teacher provider. |
+| `--count` | `-c` | `int` | `10` | Number of exemplars to synthesize per intent. |
+| `--intent` | `-i` | `string` | `None` | Specific intent to generate for (e.g. `class_a_policy`, `class_b_offtopic`). Defaults to all declared intents. |
+
+**Examples:**
+```bash
+# Generate 15 exemplars per intent using local Ollama teacher
+ai-trains-ai generate-exemplars support -p ollama -m qwen2.5:3b -c 15
+
+# Generate exemplars specifically for off-topic intent using Gemini teacher
+ai-trains-ai generate-exemplars helpdesk -p gemini -i class_b_offtopic -c 20
+```
+
+---
+
 ## 4. Fine-Tuning & Model Registration
 
 ### `train`
@@ -451,71 +485,119 @@ ai-institute pentest <role> [OPTIONS]
 
 ---
 
-## 6. Deployment, Public Tunneling & OS Autostart
-
-### `deploy`
-Starts the Uvicorn REST API server for a role with optional public HTTPS tunneling and systemd autostart on system boot.
+### `calibrate`
+Performs semantic calibration and cross-intent cosine similarity auditing for roles with the Laya Decision Engine enabled. Identifies semantic overlaps ($S \ge 0.50$) between intents and recommends optimal confidence thresholds.
 
 **Usage:**
 ```bash
-ai-institute deploy <role> [OPTIONS]
+ai-trains-ai calibrate <role> [OPTIONS]
 ```
 
 **Arguments:**
 | Argument | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `role` | `string` | **Yes** | Role to deploy (e.g. `librarian`). |
+| `role` | `string` | **Yes** | Target assistant role name. |
 
 **Options:**
 | Option | Flag | Type | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
-| `--port` | `-p` | `int` | `8080` | Port for the FastAPI server to bind to. |
-| `--host` | `-h` | `string` | `127.0.0.1` | Network interface to listen on. Use `0.0.0.0` for remote access. |
-| `--background` /<br>`--foreground` | `-d` /<br>`-f` | `bool` | `True` | Runs in background as a daemon by default. Pass `-f` to run in foreground. |
-| `--tunnel` | — | `bool` | `False` | Automatically establishes a secure reverse SSH tunnel over outbound HTTPS port 443, giving you a live public HTTPS address for your team. |
-| `--autostart` | — | `bool` | `False` | Generates, enables, and starts a systemd service (`ai-institute-<role>.service`) for 24/7 reboot persistence. (Requires root/sudo). |
+| `--apply` | — | `bool` | `False` | Automatically writes recommended thresholds to `decision_engine.yaml`. |
 
 **Examples:**
 ```bash
-# 1. Simple local background server
-ai-institute deploy librarian --port 8080
+# Audit semantic similarity across intents
+ai-trains-ai calibrate support
 
-# 2. Local server + live public link for your team
-ai-institute deploy librarian --port 8080 --host 0.0.0.0 --tunnel
+# Audit and automatically apply recommended thresholds
+ai-trains-ai calibrate support --apply
+```
 
-# 3. Full production: 24/7 autostart on system reboot + public tunnel
-sudo ai-institute deploy librarian --port 8080 --host 0.0.0.0 --tunnel --autostart
+---
+
+## 6. Deployment, Public Tunneling & OS Autostart
+
+### `deploy`
+Starts the Uvicorn REST API server for one or multiple roles with real-time GPU VRAM budget auditing, optional public HTTPS tunneling, and systemd autostart on system boot.
+
+**Usage:**
+```bash
+ai-trains-ai deploy [role] [OPTIONS]
+```
+
+**Arguments:**
+| Argument | Type | Required | Description |
+| :--- | :--- | :--- | :--- |
+| `role` | `string` | No | Single role or comma-separated roles to deploy (e.g. `support` or `support,billing`). |
+
+**Options:**
+| Option | Flag | Type | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `--roles` | — | `string` | `None` | Comma-separated list of roles to deploy (alternative to positional argument). |
+| `--port` | `-p` | `int` | `8080` | Port for the FastAPI server to bind to. |
+| `--host` | `-h` | `string` | `127.0.0.1` | Network interface to listen on. Use `0.0.0.0` for remote access. |
+| `--background` /<br>`--foreground` | `-d` /<br>`-f` | `bool` | `True` | Runs in background as a daemon by default. Pass `-f` to run in foreground. |
+| `--tunnel` | — | `bool` | `False` | Automatically establishes a secure reverse SSH tunnel over outbound HTTPS port 443, giving you a live public HTTPS address. |
+| `--autostart` | — | `bool` | `False` | Generates, enables, and starts a systemd service for 24/7 reboot persistence. (Requires root/sudo). |
+
+**VRAM Safety Gating:**
+Before launching, the deploy command calculates total required VRAM across all candidate role models + System-1 Laya decision engines + OS buffer. If projected VRAM exceeds physical GPU memory, the CLI interactively prompts you to unload unused Ollama models or drop specific roles before starting.
+
+**Examples:**
+```bash
+# 1. Single role deployment
+ai-trains-ai deploy support --port 8080
+
+# 2. Multi-role deployment (pre-warms both in GPU VRAM)
+ai-trains-ai deploy support,billing --port 8080
+
+# 3. Multi-role deployment with --roles flag
+ai-trains-ai deploy --roles support,billing --port 8080
+
+# 4. Full production multi-role: 24/7 autostart on reboot + public tunnel
+sudo ai-trains-ai deploy support,billing --port 8080 --host 0.0.0.0 --tunnel --autostart
 ```
 
 ---
 
 ### `status`
-Displays a status table of all active server deployments, their local bind addresses, live public tunnel URLs, PIDs/systemd services, and operational health.
+Displays a status table of all active server deployments, prewarmed roles in memory, local bind addresses, live public tunnel URLs, PIDs/systemd services, and operational health.
 
 **Usage:**
 ```bash
-ai-institute status
+ai-trains-ai status
 ```
 
 ---
 
 ### `stop`
-Gracefully shuts down a running role deployment, cleans up associated background tunnel processes, unloads model weights from Ollama memory (`keep_alive: 0`), and flushes GPU VRAM.
+Gracefully shuts down a running role deployment, cleans up associated background tunnel processes, unloads model weights from Ollama memory (`keep_alive: 0`), and flushes GPU VRAM. Supports stopping single roles, comma-separated roles, or all active deployments.
 
 **Usage:**
 ```bash
-ai-institute stop <role> [OPTIONS]
+ai-trains-ai stop <role> [OPTIONS]
 ```
 
 **Arguments:**
 | Argument | Type | Required | Description |
 | :--- | :--- | :--- | :--- |
-| `role` | `string` | **Yes** | Name of the deployed role to stop. |
+| `role` | `string` | **Yes** | Target role name to stop, comma-separated roles, or `all` to stop all running deployments. |
 
 **Options:**
 | Option | Flag | Type | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
 | `--autostart` | — | `bool` | `False` | Stops and disables the systemd service unit if previously installed with `--autostart`. |
+
+**Examples:**
+```bash
+# Stop a single role
+ai-trains-ai stop support
+
+# Stop multi-role deployment
+ai-trains-ai stop support,billing
+
+# Stop all running deployments and flush GPU VRAM
+ai-trains-ai stop all
+```
 
 ---
 

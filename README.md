@@ -18,53 +18,62 @@ Generic large language models hallucinate facts, give conflicting answers, leak 
 
 ## Core Architecture: 4-Layer Defense Stack
 
-Every user message passes through a 4-layer defense pipeline managed by the `ChatOrchestrator` before reaching the user:
+Every user message passes through a multi-layer defense pipeline managed by the `ChatOrchestrator` before reaching the user:
 
 1. Layer 1: Input Guardrails (`inference/guardrails.py`)
    - Length verification: Rejects inputs exceeding 1000 characters to prevent context-stuffing attacks.
    - Regional script detection: Catches non-English scripts (Tamil, Telugu, Malayalam, Kannada, Devanagari) and returns a polite English redirection.
    - Transliterated text detection: Identifies romanized regional slang (Hinglish, Tanglish, Manglish) using token matching and redirects to English.
    - Jailbreak filtering: Intercepts persona breaks, instruction override attempts, DAN patterns, and developer mode bypasses.
-   - Role-specific off-topic regex: Blocks out-of-scope queries configured in the role definition (for example, rejecting billing questions in an IT support assistant).
+   - Role-specific off-topic regex: Blocks out-of-scope queries configured in the role definition (Class A policy and Class B off-topic patterns).
    - Early exit: Blocked queries return an instant refusal without querying the LLM or vector store.
 
-2. Layer 2: Fine-Tuned Student Model (`inference/chat.py` via Ollama)
+2. Layer 1.5: System-1 Decision Engine & Reflex Gating (`inference/decision_engine.py`)
+   - Sub-20ms semantic reflex engine powered by unit-normalized sentence embeddings and cosine exemplar clustering.
+   - Instant reflex responses: Resolves common conversational interactions (greetings, acknowledgments, status checks, identity queries) and immediate policy refusals without invoking the heavy LLM.
+   - Intent calibration: Includes cross-intent cosine similarity auditing (`inference/calibration.py` / `calibrate` command) to detect topic overlaps ($S \ge 0.50$) and recommend optimal gating thresholds.
+
+3. Layer 2: Fine-Tuned Student Model (`inference/chat.py` via Ollama)
    - Small open models (Qwen2.5 1.5B or 3B) fine-tuned using LoRA on specialized domain QA, polite in-character refusals, and structured tool invocation patterns.
    - Refuses out-of-scope topics politely even when adversarial prompts bypass regex filters.
    - Emits structured tool calls (`<tool_call>name(param="value")</tool_call>`) when real-time external data is needed.
 
-3. Layer 3: RAG Context Grounding (`inference/rag.py`)
+4. Layer 3: RAG Context Grounding (`inference/rag.py`)
    - Persistent ChromaDB vector store maintained per role.
-   - Encodes user queries using local sentence embeddings (`all-MiniLM-L6-v2`).
+   - Encodes user queries using local sentence embeddings (`all-MiniLM-L6-v2`) with automatic CPU fallback if GPU VRAM is constrained.
+   - Strict distance cutoff filtering (`distance <= 0.85` and `similarity >= 0.20`) to eliminate irrelevant chunk hallucination.
    - Retrieves top matching document chunks and injects them into the grounded system prompt.
    - Instructs the model to rely strictly on provided facts and refuse ungrounded claims.
 
-4. Layer 4: Output Filter (`inference/output_filter.py`)
+5. Layer 4: Output Filter (`inference/output_filter.py`)
    - System prompt leak prevention: Redacts responses disclosing role instructions, system tags, or internal guidelines.
    - Telephone number sanitization: Replaces fabricated phone numbers with the role redirect contact unless a trusted source document was retrieved in context.
    - Blocked term filtering: Enforces role-specific geographic and hallucination blacklists.
 
-5. Background Tool Calling and Live Streaming
+6. Background Tool Calling and Live Streaming
    - Pass 1: The model generates initial tokens. The orchestrator buffers the first tokens to inspect for tool calls.
    - If a tool call is detected: Output streaming is suppressed. The tool executes silently against the database or API. The tool result is wrapped in `<tool_result>` tags and fed back to the model.
    - Pass 2: The model generates the final conversational answer, which streams live to the client token by token.
    - Normal responses stream immediately with zero buffering delay.
 
-6. Conversation Memory (`inference/history.py`)
+7. Conversation Memory & Dialog State Tracking (`inference/history.py`)
    - Multi-turn conversation state persisted in a per-role SQLite database (`conversations.db`).
-   - Maintains contextual continuity across turns while isolating distinct user sessions.
+   - Contextual dialog state tracking with word-boundary compound rejection regex (`\b(?:no|nope|not that one)\b`) for multi-turn disambiguation.
 
 ---
 
 ## Key Features
 
-- Synthetic Data Generation: Generates structured training datasets using teacher models (Ollama, NVIDIA NIM, Google Gemini, OpenAI) guided by role questionnaires.
+- System-1 Laya Decision Engine: Ultra-fast semantic reflex layer executing in under 20ms for instant greeting handling, conversational flows, and immediate policy refusal gating.
+- Synthetic Data & Exemplar Generation: Synthesizes structured QA training datasets and intent decision exemplars using teacher models (Ollama, NVIDIA NIM, Google Gemini, OpenAI).
 - LoRA Fine-Tuning: Automated training with hardware optimization. Runs float32 oneDNN training on CPU to avoid bfloat16 emulation slowdowns, or 4-bit QLoRA on CUDA GPUs.
+- Dynamic GPU VRAM Budgeting: Real-time physical VRAM query (`torch.cuda` + `nvidia-smi` fallback), per-role memory footprints, and interactive prompts to unload or drop models when VRAM capacity is exceeded.
+- Multi-Role Concurrent Deployment: Deploy multiple specialized role-locked models simultaneously on a single server with shared REST endpoints and pre-warming.
 - Ollama Export: Automatically packages trained weights into versioned Modelfiles and registers models directly into local Ollama instances.
-- Extensible Tool Framework: Connects assistants to real-time external data sources including SQLite databases, MySQL (such as Koha Integrated Library System), REST APIs, and local tabular files.
-- REST API Server: Production-ready FastAPI service with health checks, role discovery, and Server-Sent Events (SSE) live token streaming.
-- Document-Aware Pre-Warming: Preloads document context and system prompts into Ollama's KV cache on startup, dropping first-turn CPU latency from ~8s to under 2s and GPU response times to ~0.4s.
-- Automatic Memory Lifecycle: Uses `keep_alive: -1` during runtime to lock models in GPU VRAM or system RAM, with a 120s warmup ceiling to accommodate cloud storage cold starts. Evicts models (`keep_alive: 0`) and flushes PyTorch GPU cache (`torch.cuda.empty_cache()`) on shutdown to free memory cleanly.
+- Extensible Tool Framework: Connects assistants to real-time external data sources including SQLite databases, MySQL, REST APIs, and local tabular files with conversational query cleaning and fuzzy NLP matching.
+- REST API Server: Production-ready FastAPI service with health checks, multi-role discovery, and Server-Sent Events (SSE) live token streaming.
+- Document-Aware Pre-Warming: Preloads document context, decision engine weights, and system prompts into Ollama's KV cache on startup, dropping first-turn CPU latency from ~8s to under 2s and GPU response times to ~0.4s.
+- Automatic Memory Lifecycle: Uses `keep_alive: -1` during runtime to lock models in GPU VRAM or system RAM. Evicts models (`keep_alive: 0`) and flushes PyTorch GPU cache (`torch.cuda.empty_cache()`) on shutdown to free memory cleanly.
 - Adversarial Pentest Suite: Built-in automated security evaluation testing 50+ adversarial attack vectors across all defense layers.
 - Complete Portability: Backup and restore entire role bundles (configs, tools, and pre-computed vector stores) as compressed archives.
 
@@ -72,9 +81,9 @@ Every user message passes through a 4-layer defense pipeline managed by the `Cha
 
 ## CLI Command Reference
 
-All commands can be run directly via `.venv/bin/ai-institute <command>`, or `ai-institute <command>` (with the virtual environment activated).
+All commands can be run directly via `.venv/bin/ai-trains-ai <command>`, or `ai-trains-ai <command>` (with the virtual environment activated).
 
-> **Full Reference**: See [`commands.md`](commands.md) for a comprehensive guide to all 26 commands with complete argument tables, option flags, defaults, and usage examples.
+> **Full Reference**: See [`commands.md`](commands.md) for a comprehensive guide to all 28 commands with complete argument tables, option flags, defaults, and usage examples.
 
 ### Role Management
 
