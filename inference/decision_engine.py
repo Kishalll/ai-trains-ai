@@ -113,6 +113,22 @@ class LayaDecisionEngine:
 
             # For policy and off-topic intents, verify they beat domain search
             if intent_name in ("class_a_policy", "class_b_offtopic"):
+                if intent_name == "class_b_offtopic" and self.entity_checker and callable(self.entity_checker):
+                    try:
+                        tutoring_markers = (
+                            "teach me", "tutor me", "can you tutor",
+                            "solve this", "solve my", "solve question", "solve problem", "solve the integral", "solve equation",
+                            "do my homework", "do my assignment", "help me with my homework", "help me solve", "help me write",
+                            "write code", "write a python", "write a script", "write an essay", "write a poem", "write a book", "write my",
+                            "explain how to", "explain the first", "explain to me", "explain the derivation",
+                            "how to hack", "how to reach", "how do i reach", "directions to"
+                        )
+                        has_tutoring_marker = any(m in cleaned.lower() for m in tutoring_markers)
+                        if self.entity_checker(cleaned) and not has_tutoring_marker:
+                            continue
+                    except Exception:
+                        pass
+
                 if score >= thresh and score > search_score:
                     return intent_name, score, scores
             elif intent_name == "general_conversation":

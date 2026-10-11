@@ -236,7 +236,7 @@ class ChatOrchestrator:
                 "Could not connect to Ollama server at http://localhost:11434. Please run 'ollama serve'."
             ) from e
 
-    def _build_system_prompt(self, context_chunks: list[str] | None = None, include_tools: bool = True) -> str:
+    def _build_system_prompt(self, context_chunks: list[str] | None = None, include_tools: bool = True, intent_directive: str | None = None) -> str:
         desc = self.role_config.get("description", "A specialized role-locked AI assistant")
         q = self.role_config.get("questionnaire", {})
         refusal_msg = q.get(
@@ -268,6 +268,18 @@ Strict instructions:
 - Begin immediately with a brief direct phrase.
 - Speak in short, crisp sentences. End every sentence with a period or question mark.
 - Never write markdown symbols (no asterisks, bullet dashes, or bolding)."""
+
+        if intent_directive:
+            return f"""You are the {self.role_name}, {desc}.
+You are speaking aloud through an interactive voice kiosk.
+
+Active Conversational Directive:
+{intent_directive}
+
+Strict guidelines:
+1. Reply warmly, politely, and concisely in 1-2 short spoken sentences.
+2. Never recite refusal messages or out-of-scope warnings.
+3. Keep answers brief and natural in English. Never use markdown symbols (no asterisks or bullets)."""
 
         if include_tools and self.tools:
             tools_block = self.executor.format_tools_for_prompt()
@@ -344,16 +356,17 @@ Strict instructions:
         except Exception:
             pass
 
-    def _stream_ollama(self, messages: list[dict[str, str]]):
+    def _stream_ollama(self, messages: list[dict[str, str]], model: str | None = None, num_predict: int = 120):
+        target_model = model or self.ollama_model
         payload = {
-            "model": self.ollama_model,
+            "model": target_model,
             "messages": messages,
             "stream": True,
             "keep_alive": -1,
             "options": {
                 "temperature": 0.2,
                 "top_p": 0.9,
-                "num_predict": 120,
+                "num_predict": num_predict,
             },
         }
 
@@ -472,6 +485,8 @@ Strict instructions:
                 return
 
         # Step 1.5: System-1 Decision Engine (if enabled for this role)
+        is_conversational = False
+        intent_directive = None
         if self.decision_engine is not None:
             intent, score, _ = self.decision_engine.classify(text)
             action, custom_resp = self.decision_engine.get_intent_action(str(intent)) if intent else ("generative_llm", "")
@@ -488,38 +503,102 @@ Strict instructions:
             if action == "conversation_handler" or intent in ("general_conversation", "greeting"):
                 elapsed = round(time.time() - t0, 3)
                 t_lower = text.lower().strip()
-                if any(w in t_lower for w in ["thank", "thx", "tysm"]):
-                    conv_resp = random.choice(GRATITUDE_RESPONSES)
-                elif any(w in t_lower for w in ["who are you", "what are you", "who r u", "your name", "what can you do", "introduce", "about yourself", "how can you help"]):
-                    conv_resp = random.choice(IDENTITY_RESPONSES).format(role=self.role_name)
-                elif any(w in t_lower for w in ["bye", "goodbye", "see you", "have a nice day"]):
-                    conv_resp = random.choice(FAREWELL_RESPONSES)
-                elif any(t_lower == s or s in t_lower for s in ["im good", "i am good", "im fine", "i am fine", "fine", "doing well", "all good", "im doing great"]):
-                    conv_resp = random.choice(STATUS_RESPONSES)
-                elif re.search(r"^(?:my name is|call me)\s+[a-z]+|^(?:i'?m|i am)\s+(?!not\b|a\b|an\b|looking\b|searching\b|fine\b|good\b|well\b|studying\b|trying\b|just\b)[a-z]{2,20}$", t_lower):
-                    conv_resp = random.choice(INTRO_RESPONSES)
-                elif re.search(r"\b(wrong|incorrect|not right|not what i (asked|meant|wanted)|(didn't|didnt) mean that|misunderstood)\b", t_lower):
+                if re.search(r"\b(wrong|incorrect|not right|not what i (asked|meant|wanted)|(didn't|didnt) mean that|misunderstood)\b", t_lower):
                     conv_resp = random.choice(FEEDBACK_RESPONSES)
+                    yield {"type": "token", "content": conv_resp}
+                    yield {
+                        "type": "meta",
+                        "session_id": sid,
+                        "blocked": False,
+                        "layer": "decision_engine",
+                        "sources": [],
+                        "elapsed": elapsed,
+                        "response": conv_resp,
+                    }
+                    return
                 elif re.search(r"\b(don'?t know|dont know|not sure|no idea|what (should|to) do|how (do|can) i search|confused|help me)\b", t_lower):
                     conv_resp = random.choice(UNCERTAINTY_RESPONSES)
+                    yield {"type": "token", "content": conv_resp}
+                    yield {
+                        "type": "meta",
+                        "session_id": sid,
+                        "blocked": False,
+                        "layer": "decision_engine",
+                        "sources": [],
+                        "elapsed": elapsed,
+                        "response": conv_resp,
+                    }
+                    return
                 elif t_lower in ["hmm", "hmmm", "um", "uh", "er", "well", "wait", "let me think", "wait a sec", "give me a second"]:
                     conv_resp = random.choice(FILLER_RESPONSES)
-                elif any(t_lower == r for r in ["ok", "okay", "k", "cool", "nice", "awesome", "great", "got it", "alright", "ohh", "oh", "sure", "understood", "right"]):
-                    conv_resp = random.choice(ACK_RESPONSES)
+                    yield {"type": "token", "content": conv_resp}
+                    yield {
+                        "type": "meta",
+                        "session_id": sid,
+                        "blocked": False,
+                        "layer": "decision_engine",
+                        "sources": [],
+                        "elapsed": elapsed,
+                        "response": conv_resp,
+                    }
+                    return
+                elif any(w in t_lower for w in ["who are you", "what are you", "who r u", "your name", "what can you do", "introduce", "about yourself", "how can you help"]):
+                    conv_resp = random.choice(IDENTITY_RESPONSES).format(role=self.role_name)
+                    yield {"type": "token", "content": conv_resp}
+                    yield {
+                        "type": "meta",
+                        "session_id": sid,
+                        "blocked": False,
+                        "layer": "decision_engine",
+                        "sources": [],
+                        "elapsed": elapsed,
+                        "response": conv_resp,
+                    }
+                    return
+                elif any(w in t_lower for w in ["bye", "goodbye", "see you", "have a nice day"]):
+                    conv_resp = random.choice(FAREWELL_RESPONSES)
+                    yield {"type": "token", "content": conv_resp}
+                    yield {
+                        "type": "meta",
+                        "session_id": sid,
+                        "blocked": False,
+                        "layer": "decision_engine",
+                        "sources": [],
+                        "elapsed": elapsed,
+                        "response": conv_resp,
+                    }
+                    return
                 else:
-                    conv_resp = custom_resp or random.choice(GREETING_RESPONSES).format(role=self.role_name)
-
-                yield {"type": "token", "content": conv_resp}
-                yield {
-                    "type": "meta",
-                    "session_id": sid,
-                    "blocked": False,
-                    "layer": "decision_engine",
-                    "sources": [],
-                    "elapsed": elapsed,
-                    "response": conv_resp,
-                }
-                return
+                    is_conversational = True
+                    if any(w in t_lower for w in ["thank", "thx", "tysm"]):
+                        intent_directive = (
+                            "The user is expressing gratitude or thanks. "
+                            "Warmly reply that they are welcome and ask how you can further assist them with in-scope tasks. "
+                            "Do not repeat previous greetings."
+                        )
+                    elif any(t_lower == s or s in t_lower for s in ["im good", "i am good", "im fine", "i am fine", "fine", "doing well", "all good", "im doing great"]):
+                        intent_directive = (
+                            "The user is sharing that they are doing well. "
+                            "Acknowledge pleasantly (e.g., 'Glad to hear that!') and ask how you can assist them today."
+                        )
+                    elif re.search(r"^(?:my name is|call me)\s+[a-z]+|^(?:i'?m|i am)\s+(?!not\b|a\b|an\b|looking\b|searching\b|fine\b|good\b|well\b|studying\b|trying\b|just\b)[a-z]{2,20}$", t_lower):
+                        intent_directive = (
+                            "The user introduced themselves with their name. "
+                            "Welcome them politely by name and ask how you can help them today."
+                        )
+                    elif any(t_lower == r for r in ["ok", "okay", "k", "cool", "nice", "awesome", "great", "got it", "alright", "ohh", "oh", "sure", "understood", "right"]):
+                        intent_directive = (
+                            f"The user gave a conversational acknowledgment ('{text}'). "
+                            "Acknowledge it naturally and warmly (e.g., 'Glad to hear that!', 'Understood!'). "
+                            "Do not repeat previous greetings or re-introduce yourself. "
+                            "Ask how you can assist them next."
+                        )
+                    else:
+                        intent_directive = (
+                            f"The user is greeting you or starting a conversation. "
+                            f"If this is the beginning of the conversation, warmly welcome them as the {self.role_name} assistant and ask how you can help today. "
+                            "If you already greeted them in previous conversation history, do not repeat the introductory greeting—simply acknowledge them warmly."
+                        )
 
             elif action == "verbatim":
                 elapsed = round(time.time() - t0, 3)
@@ -536,21 +615,29 @@ Strict instructions:
                 }
                 return
 
-        # Step 2: RAG Retrieval (Layer 3 Context Grounding) with Distance Thresholding
-        rag_hits = self.vectorstore.search(text, top_k=3)
-        context_chunks = [
-            h["text"]
-            for h in rag_hits
-            if h.get("distance", 1.0) <= 0.85 and h.get("similarity", 0.0) >= 0.20
-        ]
-        sources = list({h.get("source", "unknown") for h in rag_hits if h.get("source") and h.get("distance", 1.0) <= 0.85})
+        if is_conversational:
+            context_chunks = []
+            sources = []
+        else:
+            # Step 2: RAG Retrieval (Layer 3 Context Grounding) with Distance Thresholding
+            rag_hits = self.vectorstore.search(text, top_k=3)
+            context_chunks = [
+                h["text"]
+                for h in rag_hits
+                if h.get("distance", 1.0) <= 0.85 and h.get("similarity", 0.0) >= 0.20
+            ]
+            sources = list({h.get("source", "unknown") for h in rag_hits if h.get("source") and h.get("distance", 1.0) <= 0.85})
 
-        # Step 3: Conversation History Assembly (only if query is a follow-up)
+        # Step 3: Conversation History Assembly (always include history for conversational flow or follow-up queries)
         history_turns = get_history(self.db_path, sid, limit=8)
-        use_history = _is_followup_query(text, history_turns)
+        use_history = is_conversational or _is_followup_query(text, history_turns)
 
         # Build System Prompt with Grounding
-        system_prompt = self._build_system_prompt(context_chunks)
+        system_prompt = self._build_system_prompt(
+            context_chunks,
+            include_tools=not is_conversational,
+            intent_directive=intent_directive,
+        )
 
         messages = [{"role": "system", "content": system_prompt}]
         if use_history:
@@ -561,64 +648,71 @@ Strict instructions:
         # Step 4: Stream Pass 1 with Tool Detection
         buffer = ""
         is_tool = False
-        stream_gen = self._stream_ollama(messages)
+        num_predict = 45 if is_conversational else 120
+        stream_gen = self._stream_ollama(messages, num_predict=num_predict)
 
-        for token in stream_gen:
-            buffer += token
-            # Check if output is initiating a tool call
-            if len(buffer) >= 11 or "\n" in buffer:
-                if buffer.strip().startswith("<tool_call"):
-                    is_tool = True
-                break
-
-        full_response = buffer
-        if is_tool:
-            # Tool call detected: consume entire tool tag silently WITHOUT streaming to user
-            for token in stream_gen:
-                full_response += token
-
-            tool_calls = self.executor.parse_tool_calls(full_response) if self.tools else []
-            if tool_calls:
-                tool_outputs = []
-                for t_name, t_args in tool_calls:
-                    res = self.executor.execute(t_name, t_args, session_id=sid)
-                    tool_outputs.append(f"<tool_result>\n{res}\n</tool_result>")
-                    sources.append(f"tool:{t_name}")
-
-                # Pass 2 prompt: direct grounded synthesis without tool looping
-                clean_tool_text = "\n".join([re.sub(r"</?tool_result>", "", o).strip() for o in tool_outputs])
-                p2_system = (
-                    f"You are the {self.role_name} assistant.\n"
-                    "Answer the user's question directly, clearly, and concisely in 1-2 spoken sentences based ONLY on the provided Information.\n"
-                    "Never output XML tags, markdown symbols, or <tool_call> tags."
-                )
-                p2_user = f"Information:\n{clean_tool_text}\n\nQuestion: {text}"
-                messages_pass2 = [
-                    {"role": "system", "content": p2_system},
-                    {"role": "user", "content": p2_user},
-                ]
-
-                # Pass 2: Stream the final user-facing response live
-                final_text = ""
-                for token in self._stream_ollama(messages_pass2):
-                    final_text += token
-                    if not final_text.strip().startswith("<tool_call"):
-                        yield {"type": "token", "content": token}
-
-                # Safety fallback if model still somehow produced a tool call
-                if final_text.strip().startswith("<tool_call"):
-                    fallback_line = clean_tool_text.splitlines()[0] if clean_tool_text else "Information is available."
-                    fallback_clean = re.sub(r"^[A-Za-z ]+:\s*", "", fallback_line)
-                    yield {"type": "token", "content": fallback_clean}
-                    full_response = fallback_clean
-                else:
-                    full_response = final_text
-        else:
-            # Not a tool call: release the initial buffer, then stream rest of tokens
-            yield {"type": "token", "content": buffer}
+        if is_conversational:
+            full_response = ""
             for token in stream_gen:
                 full_response += token
                 yield {"type": "token", "content": token}
+        else:
+            for token in stream_gen:
+                buffer += token
+                # Check if output is initiating a tool call
+                if len(buffer) >= 11 or "\n" in buffer:
+                    if buffer.strip().startswith("<tool_call"):
+                        is_tool = True
+                    break
+
+            full_response = buffer
+            if is_tool:
+                # Tool call detected: consume entire tool tag silently WITHOUT streaming to user
+                for token in stream_gen:
+                    full_response += token
+
+                tool_calls = self.executor.parse_tool_calls(full_response) if self.tools else []
+                if tool_calls:
+                    tool_outputs = []
+                    for t_name, t_args in tool_calls:
+                        res = self.executor.execute(t_name, t_args, session_id=sid)
+                        tool_outputs.append(f"<tool_result>\n{res}\n</tool_result>")
+                        sources.append(f"tool:{t_name}")
+
+                    # Pass 2 prompt: direct grounded synthesis without tool looping
+                    clean_tool_text = "\n".join([re.sub(r"</?tool_result>", "", o).strip() for o in tool_outputs])
+                    p2_system = (
+                        f"You are the {self.role_name} assistant.\n"
+                        "Answer the user's question directly, clearly, and concisely in 1-2 spoken sentences based ONLY on the provided Information.\n"
+                        "Never output XML tags, markdown symbols, or <tool_call> tags."
+                    )
+                    p2_user = f"Information:\n{clean_tool_text}\n\nQuestion: {text}"
+                    messages_pass2 = [
+                        {"role": "system", "content": p2_system},
+                        {"role": "user", "content": p2_user},
+                    ]
+
+                    # Pass 2: Stream the final user-facing response live
+                    final_text = ""
+                    for token in self._stream_ollama(messages_pass2):
+                        final_text += token
+                        if not final_text.strip().startswith("<tool_call"):
+                            yield {"type": "token", "content": token}
+
+                    # Safety fallback if model still somehow produced a tool call
+                    if final_text.strip().startswith("<tool_call"):
+                        fallback_line = clean_tool_text.splitlines()[0] if clean_tool_text else "Information is available."
+                        fallback_clean = re.sub(r"^[A-Za-z ]+:\s*", "", fallback_line)
+                        yield {"type": "token", "content": fallback_clean}
+                        full_response = fallback_clean
+                    else:
+                        full_response = final_text
+            else:
+                # Not a tool call: release the initial buffer, then stream rest of tokens
+                yield {"type": "token", "content": buffer}
+                for token in stream_gen:
+                    full_response += token
+                    yield {"type": "token", "content": token}
 
         role_name = self.role_config.get("name", "assistant")
         default_refusal = f"I am the {role_name} and can only assist with related queries."
@@ -630,12 +724,15 @@ Strict instructions:
 
         # Step 6: Save Turn to Conversation Memory (skip refusals and out-of-scope responses)
         is_refusal = bool(
-            is_output_filtered
-            or (refusal_msg and refusal_msg.lower() in filtered_response.lower())
-            or "can only assist with" in filtered_response.lower()
-            or "cannot assist" in filtered_response.lower()
-            or "out of scope" in filtered_response.lower()
-            or "unable to assist" in filtered_response.lower()
+            (
+                is_output_filtered
+                or (refusal_msg and refusal_msg.lower() in filtered_response.lower())
+                or "can only assist with" in filtered_response.lower()
+                or "cannot assist" in filtered_response.lower()
+                or "out of scope" in filtered_response.lower()
+                or "unable to assist" in filtered_response.lower()
+            )
+            and not is_conversational
         )
 
         if not is_refusal:

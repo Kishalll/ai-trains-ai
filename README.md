@@ -30,7 +30,8 @@ Every user message passes through a multi-layer defense pipeline managed by the 
 
 2. Layer 1.5: System-1 Decision Engine & Reflex Gating (`inference/decision_engine.py`)
    - Sub-20ms semantic reflex engine powered by unit-normalized sentence embeddings and cosine exemplar clustering.
-   - Instant reflex responses: Resolves common conversational interactions (greetings, acknowledgments, status checks, identity queries) and immediate policy refusals without invoking the heavy LLM.
+   - Hybrid Intent Architecture: General conversational pleasantries, greetings, and acknowledgments route dynamically to the generative model with prompt intent guidance and multi-turn conversation memory, eliminating canned robotic repetition while preserving sub-15ms deterministic institutional reflexes for fillers, holdings, and uncertainty.
+   - Domain Entity Grounding & Imperative Action Protection: Employs `entity_checker` callback verification paired with multi-word directed imperative action discrimination (`IMPERATIVE_AI_ACTIONS`), ensuring domain entity titles containing action words (such as *"How to..."*, *"Solve..."*, *"Coding..."*) search domain catalogs while active tutoring or homework commands are strictly refused.
    - Intent calibration: Includes cross-intent cosine similarity auditing (`inference/calibration.py` / `calibrate` command) to detect topic overlaps ($S \ge 0.50$) and recommend optimal gating thresholds.
 
 3. Layer 2: Fine-Tuned Student Model (`inference/chat.py` via Ollama)
