@@ -949,27 +949,51 @@ def _unload_ollama_model(model_name: str, url: str = "http://localhost:11434"):
 
 @app.command("deploy")
 def deploy_command(
-    role: str = typer.Argument(..., help="Role to deploy"),
+    role: Optional[str] = typer.Argument(None, help="Role(s) to deploy (comma-separated, e.g. role1 or role1,role2)"),
+    roles: Optional[str] = typer.Option(None, "--roles", help="Comma-separated list of roles to deploy"),
     port: int = typer.Option(8080, "--port", "-p", help="Port to run the API server on"),
     host: str = typer.Option("127.0.0.1", "--host", "-h", help="Host interface to bind to"),
     background: bool = typer.Option(True, "--background/--foreground", "-d/-f", help="Run in background as a daemon (default: True)"),
     tunnel: bool = typer.Option(False, "--tunnel", help="Expose deployment via public HTTPS reverse tunnel over port 443"),
     autostart: bool = typer.Option(False, "--autostart", help="Install systemd service for 24/7 autostart on reboot"),
 ):
-    """Start the REST API server for a role with optional public tunnel and reboot autostart."""
+    """Start the REST API server for one or multiple roles with optional public tunnel and reboot autostart."""
     import deps
 
     if not deps.require_group("api"):
         console.print("[red]Aborted:[/red] API dependencies are required to deploy.")
         raise typer.Exit(1)
 
-    roles_dir = get_roles_dir()
-    role_path = roles_dir / role
-    if not role_path.exists() or not (role_path / "role.yaml").exists():
-        console.print(f"[red]Error:[/red] Role '{role}' not found at {role_path}")
+    raw_roles = roles or role
+    if not raw_roles:
+        console.print("[red]Error:[/red] Please specify role name(s) or pass --roles <role1,role2,...>")
         raise typer.Exit(1)
 
+    target_roles = [r.strip() for r in raw_roles.split(",") if r.strip()]
+    if not target_roles:
+        console.print("[red]Error:[/red] No valid roles provided.")
+        raise typer.Exit(1)
+
+    roles_dir = get_roles_dir()
+    for r in target_roles:
+        r_path = roles_dir / r
+        if not r_path.exists() or not (r_path / "role.yaml").exists():
+            console.print(f"[red]Error:[/red] Role '{r}' not found at {r_path}")
+            raise typer.Exit(1)
+
     _ensure_ollama_running()
+
+    # GPU VRAM calculation & interactive drop/unload manager
+    from inference.vram_manager import manage_vram_budget_interactive
+
+    approved_roles = manage_vram_budget_interactive(target_roles, roles_dir=roles_dir, console=console)
+    if not approved_roles:
+        console.print("[yellow]No roles approved for deployment. Aborting.[/yellow]")
+        raise typer.Exit(0)
+
+    prewarm_roles_str = ",".join(approved_roles)
+    deploy_role_label = ", ".join(approved_roles)
+    primary_role = approved_roles[0]
 
     deployments = _load_deployments()
 
@@ -987,16 +1011,16 @@ def deploy_command(
         is_root = (os.geteuid() == 0) if hasattr(os, "geteuid") else True
         if not is_root:
             console.print("[red]Error:[/red] Installing systemd units requires root privileges. Please run with sudo:")
-            console.print(f"  sudo {sys.executable} cli.py deploy {role} --port {port} --host {host} {'--tunnel ' if tunnel else ''}--autostart")
+            console.print(f"  sudo {sys.executable} cli.py deploy {prewarm_roles_str} --port {port} --host {host} {'--tunnel ' if tunnel else ''}--autostart")
             raise typer.Exit(1)
 
         project_root = Path(__file__).resolve().parent
         user_name = os.environ.get("SUDO_USER") or os.environ.get("USER") or "root"
-        service_name = f"ai-institute-{role}.service"
+        service_name = f"ai-trains-ai-{primary_role}.service"
         unit_path = Path("/etc/systemd/system") / service_name
 
         unit_content = f"""[Unit]
-Description=AI-Institute {role} REST API Service
+Description=AI-Trains-AI ({deploy_role_label}) REST API Service
 After=network.target ollama.service
 Wants=ollama.service
 
@@ -1004,8 +1028,9 @@ Wants=ollama.service
 Type=simple
 User={user_name}
 WorkingDirectory={project_root}
-Environment="AI_INSTITUTE_ROLES_DIR={roles_dir.resolve()}"
-Environment="AI_INSTITUTE_PREWARM_ROLE={role}"
+Environment="AI_TRAINS_AI_ROLES_DIR={roles_dir.resolve()}"
+Environment="AI_TRAINS_AI_PREWARM_ROLE={prewarm_roles_str}"
+EnvironmentFile=-{project_root}/.env
 ExecStart={sys.executable} -m uvicorn api.server:app --host {host} --port {port}
 Restart=always
 RestartSec=5
@@ -1014,10 +1039,10 @@ TimeoutStartSec=120
 [Install]
 WantedBy=multi-user.target
 """
-        tunnel_service_name = f"ai-institute-{role}-tunnel.service"
+        tunnel_service_name = f"ai-trains-ai-{primary_role}-tunnel.service"
         tunnel_unit_path = Path("/etc/systemd/system") / tunnel_service_name
         tunnel_unit_content = f"""[Unit]
-Description=Public HTTPS Tunnel for AI-Institute {role}
+Description=Public HTTPS Tunnel for AI-Trains-AI ({deploy_role_label})
 After=network.target {service_name}
 Wants={service_name}
 
@@ -1043,7 +1068,7 @@ WantedBy=multi-user.target
         if tunnel:
             subprocess.run([systemctl_bin, "enable", "--now", tunnel_service_name], check=True)
 
-        console.print(f"[bold green]Autostart enabled and service started for {role}![/bold green]")
+        console.print(f"[bold green]Autostart enabled and service started for {deploy_role_label}![/bold green]")
 
         import urllib.request
         probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
@@ -1067,8 +1092,9 @@ WantedBy=multi-user.target
                         tunnel_url = u
                         break
 
-        deployments[role] = {
-            "role": role,
+        deployments[prewarm_roles_str] = {
+            "role": prewarm_roles_str,
+            "roles": approved_roles,
             "host": host,
             "port": port,
             "autostart": True,
@@ -1080,8 +1106,9 @@ WantedBy=multi-user.target
         _save_deployments(deployments)
 
         panel_lines = [
-            f"[bold green]Deployed {role} (24/7 Autostart Enabled)[/bold green]\n",
+            f"[bold green]Deployed {deploy_role_label} (24/7 Autostart Enabled)[/bold green]\n",
             f"Service:      [cyan]{service_name}[/cyan] (active / enabled on boot)",
+            f"Roles:        [cyan]{prewarm_roles_str}[/cyan]",
             f"Local URL:    [cyan]http://{probe_host}:{port}[/cyan]",
         ]
         if host in ("0.0.0.0", "::"):
@@ -1100,8 +1127,8 @@ WantedBy=multi-user.target
     for name, info in list(deployments.items()):
         pid = info.get("pid")
         if pid and _is_pid_alive(pid):
-            if name == role:
-                console.print(f"[yellow]Role '{role}' is already running[/yellow] on port {info.get('port')} (PID {pid}).")
+            if name == prewarm_roles_str:
+                console.print(f"[yellow]Roles '{deploy_role_label}' already running[/yellow] on port {info.get('port')} (PID {pid}).")
                 raise typer.Exit(0)
             if info.get("port") == port:
                 console.print(f"[red]Error:[/red] Port {port} is already used by deployment '{name}' (PID {pid}).")
@@ -1109,9 +1136,10 @@ WantedBy=multi-user.target
         elif pid:
             del deployments[name]
 
+    probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     env = os.environ.copy()
-    env["AI_INSTITUTE_ROLES_DIR"] = str(roles_dir.resolve())
-    env["AI_INSTITUTE_PREWARM_ROLE"] = role
+    env["AI_TRAINS_AI_ROLES_DIR"] = str(roles_dir.resolve())
+    env["AI_TRAINS_AI_PREWARM_ROLE"] = prewarm_roles_str
 
     cmd = [
         sys.executable,
@@ -1138,12 +1166,12 @@ WantedBy=multi-user.target
                 )
             TUNNEL_PID_FILE.write_text(str(tunnel_proc.pid), encoding="utf-8")
 
-        console.print(f"Starting server in foreground on http://{host}:{port}...")
+        console.print(f"Starting server in foreground on http://{host}:{port} serving roles [{prewarm_roles_str}]...")
         subprocess.run(cmd, env=env)
         return
 
     # Background Daemon Mode
-    log_file = Path(f".server_{role}_{port}.log")
+    log_file = Path(f".server_{'_'.join(approved_roles)}_{port}.log")
     log_fp = open(log_file, "a", encoding="utf-8")
     proc = subprocess.Popen(
         cmd,
@@ -1155,7 +1183,6 @@ WantedBy=multi-user.target
 
     started = False
     import urllib.request
-    probe_host = "127.0.0.1" if host in ("0.0.0.0", "::") else host
     for _ in range(120):
         time.sleep(1.0)
         if proc.poll() is not None:
@@ -1207,8 +1234,9 @@ WantedBy=multi-user.target
                     break
             time.sleep(0.5)
 
-    deployments[role] = {
-        "role": role,
+    deployments[prewarm_roles_str] = {
+        "role": prewarm_roles_str,
+        "roles": approved_roles,
         "host": host,
         "port": port,
         "pid": proc.pid,
@@ -1220,7 +1248,8 @@ WantedBy=multi-user.target
     _save_deployments(deployments)
 
     panel_lines = [
-        f"[bold green]Deployed {role}[/bold green]\n",
+        f"[bold green]Deployed Roles: {deploy_role_label}[/bold green]\n",
+        f"Prewarmed:    [cyan]{prewarm_roles_str}[/cyan]",
         f"Local URL:    [cyan]http://{probe_host}:{port}[/cyan]",
     ]
     if host in ("0.0.0.0", "::"):
@@ -1244,32 +1273,46 @@ WantedBy=multi-user.target
 
 @app.command("stop")
 def stop_command(
-    role: str = typer.Argument(..., help="Role deployment to stop"),
+    role: str = typer.Argument(..., help="Role deployment to stop (or comma-separated list, or 'all')"),
     autostart: bool = typer.Option(False, "--autostart", help="Stop and disable systemd autostart service"),
 ):
     """Stop a running role deployment and release model memory."""
-    _unload_ollama_model(f"ai-institute-{role}")
-
     deployments = _load_deployments()
 
-    # 1. Check systemd autostart service
-    systemctl_bin = shutil.which("systemctl")
-    is_systemd = autostart or (deployments.get(role, {}).get("autostart", False))
-    if is_systemd and systemctl_bin:
-        service_name = deployments.get(role, {}).get("service") or f"ai-institute-{role}.service"
-        tunnel_svc = deployments.get(role, {}).get("tunnel_service") or f"ai-institute-{role}-tunnel.service"
-        try:
-            subprocess.run([systemctl_bin, "stop", service_name], capture_output=True)
-            subprocess.run([systemctl_bin, "disable", service_name], capture_output=True)
-            console.print(f"[green]Stopped and disabled systemd service '{service_name}'.[/green]")
-            subprocess.run([systemctl_bin, "stop", tunnel_svc], capture_output=True)
-            subprocess.run([systemctl_bin, "disable", tunnel_svc], capture_output=True)
-        except Exception as e:
-            console.print(f"[yellow]Warning while stopping systemd service:[/yellow] {e}")
+    target_keys = []
+    if role.strip() == "all":
+        target_keys = list(deployments.keys())
+    else:
+        for k in deployments.keys():
+            if role in k or k in role or (isinstance(deployments[k].get("roles"), list) and role in deployments[k]["roles"]):
+                target_keys.append(k)
+        if not target_keys:
+            target_keys = [role]
 
-    # 2. Check user-space background processes
-    if role in deployments:
-        info = deployments[role]
+    systemctl_bin = shutil.which("systemctl")
+
+    for key in set(target_keys):
+        info = deployments.get(key, {})
+        roles_list = info.get("roles") or [r.strip() for r in key.split(",") if r.strip()]
+
+        for r in roles_list:
+            _unload_ollama_model(f"ai-institute-{r}")
+            _unload_ollama_model(f"ai-{r}")
+            _unload_ollama_model(r)
+
+        is_systemd = autostart or info.get("autostart", False)
+        if is_systemd and systemctl_bin:
+            service_name = info.get("service") or f"ai-trains-ai-{roles_list[0]}.service"
+            tunnel_svc = info.get("tunnel_service") or f"ai-trains-ai-{roles_list[0]}-tunnel.service"
+            try:
+                subprocess.run([systemctl_bin, "stop", service_name], capture_output=True)
+                subprocess.run([systemctl_bin, "disable", service_name], capture_output=True)
+                console.print(f"[green]Stopped and disabled systemd service '{service_name}'.[/green]")
+                subprocess.run([systemctl_bin, "stop", tunnel_svc], capture_output=True)
+                subprocess.run([systemctl_bin, "disable", tunnel_svc], capture_output=True)
+            except Exception as e:
+                console.print(f"[yellow]Warning while stopping systemd service:[/yellow] {e}")
+
         pid = info.get("pid")
         if pid and _is_pid_alive(pid):
             try:
@@ -1277,7 +1320,7 @@ def stop_command(
                 time.sleep(0.5)
                 if _is_pid_alive(pid):
                     os.kill(pid, signal.SIGKILL)
-                console.print(f"[green]Stopped deployment for {role}[/green] (PID {pid}).")
+                console.print(f"[green]Stopped deployment for {key}[/green] (PID {pid}).")
             except Exception as e:
                 console.print(f"[red]Failed to terminate PID {pid}:[/red] {e}")
 
@@ -1289,30 +1332,30 @@ def stop_command(
             except Exception:
                 pass
 
-        del deployments[role]
-        _save_deployments(deployments)
-    else:
-        if not is_systemd:
-            console.print(f"[yellow]No deployment found for role '{role}'.[/yellow]")
-            raise typer.Exit(1)
+        if key in deployments:
+            del deployments[key]
+
+    _save_deployments(deployments)
 
 
 @app.command("status")
 def status_command():
     """Show active role deployments."""
     deployments = _load_deployments()
+
     if not deployments:
         console.print("[dim]No active deployments recorded.[/dim]")
         return
 
-    table = Table(title="AI-Institute Deployments", border_style="blue")
-    table.add_column("Role", style="bold green")
+    table = Table(title="AI-Trains-AI Deployments", border_style="blue")
+    table.add_column("Deployment / Roles", style="bold green")
     table.add_column("Local URL", style="cyan")
     table.add_column("Public Tunnel", style="magenta")
     table.add_column("PID / Service", style="yellow")
-    table.add_column("Started At", style="dim")
+    table.add_column("Prewarmed Roles", style="cyan")
     table.add_column("Status", style="bold")
 
+    cleaned_stale = False
     for name, info in list(deployments.items()):
         pid = info.get("pid")
         host = info.get("host", "127.0.0.1")
@@ -1320,6 +1363,7 @@ def status_command():
         started_at = info.get("started_at", "unknown")
         is_auto = info.get("autostart", False)
         tunnel_url = info.get("tunnel_url") or "-"
+        roles_val = ", ".join(info.get("roles", [name]))
 
         if is_auto:
             svc = info.get("service", "systemd")
@@ -1327,11 +1371,18 @@ def status_command():
             pid_col = f"[dim]{svc}[/dim]"
         else:
             alive = _is_pid_alive(pid) if pid else False
+            if not alive and pid:
+                del deployments[name]
+                cleaned_stale = True
+                continue
             status_text = "[green]RUNNING[/green]" if alive else "[red]STOPPED[/red]"
             pid_col = str(pid) if pid else "-"
 
         display_host = "<server-ip>" if host in ("0.0.0.0", "::") else host
-        table.add_row(name, f"http://{display_host}:{port}", tunnel_url, pid_col, started_at[:19], status_text)
+        table.add_row(name, f"http://{display_host}:{port}", tunnel_url, pid_col, roles_val, status_text)
+
+    if cleaned_stale:
+        _save_deployments(deployments)
 
     console.print(table)
 

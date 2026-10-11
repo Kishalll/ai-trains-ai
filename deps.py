@@ -77,6 +77,8 @@ def get_download_size(group_name: str) -> str:
 
 
 def is_installed(package_name: str) -> bool:
+    if package_name == "mysqlclient":
+        return importlib.util.find_spec("MySQLdb") is not None or importlib.util.find_spec("pymysql") is not None
     module_name = IMPORT_NAME_MAP.get(package_name, package_name.replace("-", "_"))
     try:
         return importlib.util.find_spec(module_name) is not None

@@ -1,8 +1,11 @@
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+load_dotenv()
 
 from api.routes import _orchestrators, get_orchestrator, router, set_roles_dir
 
@@ -13,13 +16,14 @@ def create_app(roles_dir: Path | str = "roles", prewarm_role: str | None = None)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        # 1. Startup: Pre-warm target role (loads embedding weights & sends keep_alive: -1 to Ollama)
+        # 1. Startup: Pre-warm target roles (loads embedding weights & sends keep_alive: -1 to Ollama)
         if target_role:
-            try:
-                orch = get_orchestrator(target_role)
-                orch.warmup()
-            except Exception as e:
-                print(f"Warning: Could not prewarm role '{target_role}': {e}")
+            for r_name in [r.strip() for r in target_role.split(",") if r.strip()]:
+                try:
+                    orch = get_orchestrator(r_name)
+                    orch.warmup()
+                except Exception as e:
+                    print(f"Warning: Could not prewarm role '{r_name}': {e}")
         yield
         # 2. Shutdown: Release all cached orchestrator models from Ollama RAM
         for role_name, orch in list(_orchestrators.items()):

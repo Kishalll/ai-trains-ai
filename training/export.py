@@ -128,7 +128,7 @@ def export_role_to_ollama(role_path: Path, model_override: Optional[str] = None)
             print(f"Loading base model '{base_name}' on {device}...")
             base_model = AutoModelForCausalLM.from_pretrained(
                 base_name,
-                dtype=torch.float16,
+                torch_dtype=torch.float16,
                 device_map="auto" if device == "cuda" else "cpu",
             )
             model = PeftModel.from_pretrained(base_model, str(model_dir))

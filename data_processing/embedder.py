@@ -16,7 +16,14 @@ def get_embedding_model(model_name: str = DEFAULT_EMBEDDING_MODEL):
     from sentence_transformers import SentenceTransformer
 
     print(f"Loading embedding model '{model_name}'...")
-    _MODEL_INSTANCE = SentenceTransformer(model_name)
+    try:
+        _MODEL_INSTANCE = SentenceTransformer(model_name)
+    except Exception as e:
+        if "out of memory" in str(e).lower() or "cuda" in str(e).lower():
+            print(f"CUDA memory constrained, falling back to CPU for '{model_name}'...")
+            _MODEL_INSTANCE = SentenceTransformer(model_name, device="cpu")
+        else:
+            raise e
     return _MODEL_INSTANCE
 
 
