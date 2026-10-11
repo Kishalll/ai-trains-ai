@@ -52,9 +52,17 @@ def check_input_guardrails(
 ) -> tuple[bool, Optional[str]]:
     text = message.strip()
     role_name = role_config.get("name", "assistant")
-    refusal = role_config.get("questionnaire", {}).get(
+    refusal_a = role_config.get("questionnaire", {}).get(
         "refusal_message",
         f"I am the {role_name} and can only assist with related queries.",
+    )
+    refusal_b = role_config.get("questionnaire", {}).get(
+        "class_b_refusal_message",
+        refusal_a,
+    )
+    lang_msg = role_config.get("questionnaire", {}).get(
+        "language_rules_message",
+        "I can only assist in English. Could you please ask your question in English?",
     )
 
     # 1. Context stuffing / length cap
@@ -64,24 +72,38 @@ def check_input_guardrails(
     # 2. Non-English script detection
     for script_name, pattern in SCRIPT_PATTERNS.items():
         if pattern.search(text):
-            return False, "I can only assist in English. Could you please ask your question in English?"
+            return False, lang_msg
 
     # 3. Transliterated non-English detection
     tokens = set(re.findall(r"\b[a-zA-Z]+\b", text.lower()))
     for lang, markers in ROMANIZED_REGIONAL_WORDS.items():
         matches = [m for m in markers if m in tokens]
         if len(matches) >= 1:
-            return False, "I can only assist in English. Could you please ask your question in English?"
+            return False, lang_msg
 
-    # 4. Jailbreak pattern detection
+    # 4. Jailbreak pattern detection (Class B refusal for attacks)
     for pat in JAILBREAK_PATTERNS:
         if re.search(pat, text, re.IGNORECASE):
-            return False, refusal
+            return False, refusal_b
 
-    # 5. Off-topic pattern detection (loaded from role config)
-    off_topic = role_config.get("guardrails", {}).get("off_topic_patterns", [])
+    guardrails_cfg = role_config.get("guardrails", {})
+
+    # 5. Class A patterns (Domain policy & procedural guidelines)
+    class_a = guardrails_cfg.get("class_a_patterns", [])
+    for pat in class_a:
+        if re.search(pat, text, re.IGNORECASE):
+            return False, refusal_a
+
+    # 6. Class B patterns (General off-topic, unrelated domain)
+    class_b = guardrails_cfg.get("class_b_patterns", [])
+    for pat in class_b:
+        if re.search(pat, text, re.IGNORECASE):
+            return False, refusal_b
+
+    # 7. Legacy off-topic patterns (backward compatibility)
+    off_topic = guardrails_cfg.get("off_topic_patterns", [])
     for pat in off_topic:
         if re.search(pat, text, re.IGNORECASE):
-            return False, refusal
+            return False, refusal_a
 
     return True, None
