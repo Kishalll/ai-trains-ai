@@ -51,3 +51,41 @@ class GeminiTeacher(BaseTeacher):
                     content = parts[0].get("text", "")
 
         return parse_json_examples(content, category)
+
+    def generate_exemplars(
+        self,
+        role_config: dict[str, Any],
+        intent_name: str,
+        count: int = 15,
+    ) -> list[str]:
+        from teachers.base import build_exemplar_prompt, parse_json_exemplars
+        prompt = build_exemplar_prompt(role_config, intent_name, count)
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{self.model_name}:generateContent?key={self.api_key}"
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {
+                "temperature": 0.7,
+                "topP": 0.9,
+                "responseMimeType": "application/json",
+            },
+        }
+
+        req = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            candidates = data.get("candidates", [])
+            content = ""
+            if candidates:
+                parts = candidates[0].get("content", {}).get("parts", [])
+                if parts:
+                    content = parts[0].get("text", "")
+
+        return parse_json_exemplars(content)
+

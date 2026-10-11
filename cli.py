@@ -1605,8 +1605,175 @@ def auto_generate_command(
     console.print(f"[bold green]Successfully saved {len(valid)} examples to {saved_path}[/bold green]")
 
 
+@app.command("generate-exemplars")
+def generate_exemplars_command(
+    role: str = typer.Argument(..., help="Role to generate decision engine exemplars for"),
+    provider: str = typer.Option("ollama", "--provider", "-p", help="Teacher provider (ollama, nim, gemini, openai)"),
+    model: Optional[str] = typer.Option(None, "--model", "-m", help="Specific teacher model name"),
+    count: int = typer.Option(10, "--count", "-c", help="Number of exemplars per intent"),
+    intent: Optional[str] = typer.Option(None, "--intent", "-i", help="Specific intent (default: all intents)"),
+):
+    """Generate System-1 Decision Engine semantic exemplars using a teacher LLM."""
+    roles_dir = get_roles_dir()
+    role_path = roles_dir / role
+    if not role_path.exists() or not (role_path / "role.yaml").exists():
+        console.print(f"[red]Error:[/red] Role '{role}' not found at {role_path}")
+        raise typer.Exit(1)
+
+    with open(role_path / "role.yaml", "r", encoding="utf-8") as f:
+        role_config = yaml.safe_load(f) or {}
+
+    de_file = role_path / "decision_engine.yaml"
+    de_data = {}
+    if de_file.exists():
+        with open(de_file, "r", encoding="utf-8") as f:
+            de_data = yaml.safe_load(f) or {}
+
+    if not de_data.get("intents"):
+        de_data = {
+            "enabled": True,
+            "thresholds": {
+                "class_a_policy": 0.55,
+                "class_b_offtopic": 0.45,
+                "core_search": 0.50,
+            },
+            "priority_order": [
+                "class_a_policy",
+                "class_b_offtopic",
+                "core_search",
+            ],
+            "intents": {
+                "core_search": {
+                    "action": "generative_llm",
+                    "exemplars": [],
+                },
+                "class_a_policy": {
+                    "action": "verbatim",
+                    "response": role_config.get("questionnaire", {}).get(
+                        "refusal_message", "Policy queries."
+                    ),
+                    "exemplars": [],
+                },
+                "class_b_offtopic": {
+                    "action": "verbatim",
+                    "response": role_config.get("questionnaire", {}).get(
+                        "class_b_refusal_message", "Off topic queries."
+                    ),
+                    "exemplars": [],
+                },
+            },
+        }
+
+    from teachers import get_teacher
+
+    try:
+        teacher = get_teacher(provider=provider, model_name=model)
+    except Exception as e:
+        console.print(f"[red]Teacher Provider Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    intents_to_gen = [intent] if intent else list(de_data["intents"].keys())
+
+    console.print(f"Generating decision engine exemplars for [bold green]{role}[/bold green] using [cyan]{provider}[/cyan]...")
+
+    for it in intents_to_gen:
+        if it not in de_data["intents"]:
+            de_data["intents"][it] = {"action": "verbatim", "exemplars": []}
+        console.print(f"  Generating exemplars for [cyan]{it}[/cyan]...")
+        try:
+            new_exs = teacher.generate_exemplars(role_config, intent_name=it, count=count)
+            if new_exs:
+                existing = set(de_data["intents"][it].get("exemplars", []))
+                merged = list(de_data["intents"][it].get("exemplars", []))
+                added_count = 0
+                for e in new_exs:
+                    if e not in existing:
+                        merged.append(e)
+                        existing.add(e)
+                        added_count += 1
+                de_data["intents"][it]["exemplars"] = merged
+                console.print(f"    Added [green]{added_count}[/green] new exemplars (Total: {len(merged)})")
+            else:
+                console.print(f"    [yellow]No exemplars generated for '{it}'[/yellow]")
+        except Exception as e:
+            console.print(f"    [red]Error generating for '{it}':[/red] {e}")
+
+    with open(de_file, "w", encoding="utf-8") as f:
+        yaml.dump(de_data, f, sort_keys=False)
+
+    console.print(f"[bold green]Successfully saved decision engine exemplars to {de_file}[/bold green]")
+
+
+@app.command("calibrate")
+def calibrate_command(
+    role: str = typer.Argument(..., help="Role to calibrate decision engine for"),
+    apply: bool = typer.Option(False, "--apply", help="Apply recommended thresholds to decision_engine.yaml"),
+):
+    """Audit System-1 semantic similarity, detect topic overlaps, and calibrate gating thresholds."""
+    roles_dir = get_roles_dir()
+    role_path = roles_dir / role
+    if not role_path.exists() or not (role_path / "role.yaml").exists():
+        console.print(f"[red]Error:[/red] Role '{role}' not found at {role_path}")
+        raise typer.Exit(1)
+
+    from inference.calibration import calibrate_decision_engine
+
+    try:
+        res = calibrate_decision_engine(role_path)
+    except Exception as e:
+        console.print(f"[red]Calibration Error:[/red] {e}")
+        raise typer.Exit(1)
+
+    console.print(f"\n[bold]Semantic Calibration Report for [cyan]{role}[/cyan][/bold]\n")
+
+    overview_table = Table(title="Intent Clusters & Exemplar Counts", border_style="cyan")
+    overview_table.add_column("Intent", style="bold")
+    overview_table.add_column("Exemplars", style="green")
+    overview_table.add_column("Current Threshold", style="yellow")
+    overview_table.add_column("Recommended Threshold", style="bold magenta")
+
+    for name, cnt in res.intent_counts.items():
+        cur = str(res.current_thresholds.get(name, "—"))
+        rec = str(res.recommended_thresholds.get(name, "—"))
+        overview_table.add_row(name, str(cnt), cur, rec)
+
+    console.print(overview_table)
+
+    if res.overlaps:
+        overlap_table = Table(title="Detected Semantic Overlaps & Conflicting Phrases (Similarity >= 0.50)", border_style="yellow")
+        overlap_table.add_column("Intent A", style="cyan")
+        overlap_table.add_column("Intent B", style="magenta")
+        overlap_table.add_column("Max Cosine Sim", style="bold red")
+        overlap_table.add_column("Exemplar A", style="dim")
+        overlap_table.add_column("Exemplar B", style="dim")
+
+        for ov in res.overlaps[:10]:
+            sim_str = f"{ov.max_sim:.3f}"
+            style = "red" if ov.max_sim >= 0.65 else "yellow"
+            overlap_table.add_row(
+                ov.intent_a,
+                ov.intent_b,
+                f"[{style}]{sim_str}[/{style}]",
+                ov.phrase_a[:35] + "...",
+                ov.phrase_b[:35] + "...",
+            )
+        console.print("\n", overlap_table)
+    else:
+        console.print("\n[bold green]No semantic overlaps detected across intent clusters![/bold green]")
+
+    if apply:
+        de_file = role_path / "decision_engine.yaml"
+        with open(de_file, "r", encoding="utf-8") as f:
+            conf = yaml.safe_load(f) or {}
+        conf["thresholds"] = res.recommended_thresholds
+        with open(de_file, "w", encoding="utf-8") as f:
+            yaml.dump(conf, f, sort_keys=False)
+        console.print(f"\n[bold green]Successfully applied recommended thresholds to {de_file}[/bold green]")
+
+
 TUNNEL_PID_FILE = Path(".tunnel.pid")
 TUNNEL_LOG_FILE = Path(".tunnel.log")
+
 
 
 if __name__ == "__main__":

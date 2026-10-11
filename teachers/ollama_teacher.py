@@ -41,3 +41,37 @@ class OllamaTeacher(BaseTeacher):
             content = data.get("message", {}).get("content", "")
 
         return parse_json_examples(content, category)
+
+    def generate_exemplars(
+        self,
+        role_config: dict[str, Any],
+        intent_name: str,
+        count: int = 15,
+    ) -> list[str]:
+        from teachers.base import build_exemplar_prompt, parse_json_exemplars
+        prompt = build_exemplar_prompt(role_config, intent_name, count)
+
+        payload = {
+            "model": self.model_name,
+            "messages": [{"role": "user", "content": prompt}],
+            "stream": False,
+            "format": "json",
+            "options": {
+                "temperature": 0.7,
+                "top_p": 0.9,
+            },
+        }
+
+        req = urllib.request.Request(
+            f"{self.base_url}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            content = data.get("message", {}).get("content", "")
+
+        return parse_json_exemplars(content)
+

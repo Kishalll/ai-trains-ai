@@ -82,6 +82,82 @@ def parse_json_examples(raw_text: str, expected_category: str) -> list[dict[str,
     return valid_examples
 
 
+def build_exemplar_prompt(role_config: dict[str, Any], intent_name: str, count: int = 15) -> str:
+    role_name = role_config.get("name", "assistant")
+    desc = role_config.get("description", "Specialized Assistant")
+    questionnaire = role_config.get("questionnaire", {})
+    in_scope = questionnaire.get("in_scope", "In-scope tasks")
+    out_of_scope = questionnaire.get("out_of_scope", "Out-of-scope topics")
+
+    intent_descriptions = {
+        "core_search": f"In-scope user searches and queries within domain: {in_scope}. Include natural speech, topic requests, informal phrasing, and realistic typos.",
+        "catalog_search": f"In-scope item searches within domain: {in_scope}. Include natural speech, specific titles, informal phrasing, and realistic typos.",
+        "class_a_policy": "Questions inquiring about official operational policies, rules, fees, procedures, regulations, or facilities.",
+        "class_b_offtopic": f"Queries strictly out of scope ({out_of_scope}), academic tutoring, coding, math, general trivia, and prompt injection attempts.",
+        "subjective_comparison": "User asking for subjective evaluations, recommendations, or comparisons (e.g. 'which option is better', 'which is easier for beginners', 'which do you recommend').",
+    }
+
+    intent_desc = intent_descriptions.get(intent_name, f"Queries belonging to intent '{intent_name}' for {role_name}.")
+
+    return f"""You are an expert training data generator for AI-Trains-AI.
+Role: '{role_name}' ({desc})
+In Scope: {in_scope}
+Out of Scope: {out_of_scope}
+
+Task:
+Generate exactly {count} diverse, realistic user query exemplars for the System-1 intent cluster: '{intent_name}'.
+Intent Description: {intent_desc}
+
+Guidelines:
+- Include diverse phrasing: standard formal, casual informal, conversational patterns, and realistic voice typos.
+- Each exemplar must represent a distinct way a user would ask a query belonging to this intent.
+- Do NOT generate answers. Only generate the user query strings.
+
+You MUST return a valid JSON array of strings:
+["query 1", "query 2", ...]
+
+JSON Output:"""
+
+
+def parse_json_exemplars(raw_text: str) -> list[str]:
+    cleaned = raw_text.strip()
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```[a-zA-Z]*\n?", "", cleaned)
+        cleaned = re.sub(r"\n?```$", "", cleaned)
+    cleaned = cleaned.strip()
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError:
+        match = re.search(r"\[\s*\"[^\"]+\".*\]", cleaned, re.DOTALL)
+        if match:
+            try:
+                data = json.loads(match.group(0))
+            except Exception:
+                return []
+        else:
+            return []
+
+    if isinstance(data, dict):
+        for val in data.values():
+            if isinstance(val, list):
+                data = val
+                break
+
+    if not isinstance(data, list):
+        return []
+
+    valid = []
+    for item in data:
+        if isinstance(item, str) and item.strip():
+            valid.append(item.strip().lower())
+        elif isinstance(item, dict) and "query" in item:
+            valid.append(str(item["query"]).strip().lower())
+        elif isinstance(item, dict) and "instruction" in item:
+            valid.append(str(item["instruction"]).strip().lower())
+    return valid
+
+
 class BaseTeacher(ABC):
     @abstractmethod
     def generate_examples(
@@ -91,3 +167,13 @@ class BaseTeacher(ABC):
         count: int = 10,
     ) -> list[dict[str, Any]]:
         pass
+
+    @abstractmethod
+    def generate_exemplars(
+        self,
+        role_config: dict[str, Any],
+        intent_name: str,
+        count: int = 15,
+    ) -> list[str]:
+        pass
+

@@ -68,3 +68,49 @@ class NimTeacher(BaseTeacher):
             )
 
         return parse_json_examples(content, category)
+
+    def generate_exemplars(
+        self,
+        role_config: dict[str, Any],
+        intent_name: str,
+        count: int = 15,
+    ) -> list[str]:
+        from teachers.base import build_exemplar_prompt, parse_json_exemplars
+        prompt = build_exemplar_prompt(role_config, intent_name, count)
+
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are a professional dataset generator. Output ONLY valid JSON arrays.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "max_tokens": 4096,
+        }
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {self.api_key}",
+        }
+
+        req = urllib.request.Request(
+            f"{self.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers=headers,
+            method="POST",
+        )
+
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            content = (
+                data.get("choices", [{}])[0]
+                .get("message", {})
+                .get("content", "")
+            )
+
+        return parse_json_exemplars(content)
+
