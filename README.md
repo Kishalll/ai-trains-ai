@@ -1,4 +1,4 @@
-# AI-Institute
+# AI-Trains-AI
 
 [![License: PolyForm Noncommercial](https://img.shields.io/badge/License-PolyForm_Noncommercial_1.0.0-blue.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB.svg)](https://www.python.org/)
@@ -10,9 +10,9 @@
 
 > [📖 **CLI Commands Manual (`commands.md`)**](commands.md) &nbsp;|&nbsp; [🤝 **Contributor & Architecture Guide (`CONTRIBUTING.md`)**](CONTRIBUTING.md) &nbsp;|&nbsp; [📄 **License**](LICENSE)
 
-AI-Institute is a framework for building, training, evaluating, and deploying role-locked AI assistants. A place where AI teaches AI. 
+AI-Trains-AI is a framework for building, training, evaluating, and deploying role-locked AI assistants. A place where AI teaches AI. 
 
-Generic large language models hallucinate facts, give conflicting answers, leak instructions, and wander off topic. AI-Institute solves this by constraining small open models (such as Qwen2.5 1.5B and 3B) into strict specialized personas (such as a domain expert, policy assistant, or technical help desk) through fine-tuning, retrieval-augmented generation, tool calling, and multi-layer defenses.
+Generic large language models hallucinate facts, give conflicting answers, leak instructions, and wander off topic. AI-Trains-AI solves this by constraining small open models (such as Qwen2.5 1.5B and 3B) into strict specialized personas (such as a domain expert, policy assistant, or technical help desk) through fine-tuning, retrieval-augmented generation, tool calling, and multi-layer defenses.
 
 ---
 
